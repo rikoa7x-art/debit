@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+    <linearGradient id="pipeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)"/>
+  <!-- Pipe network representation -->
+  <path d="M 80 256 L 256 256 L 256 380 L 432 380" stroke="#bae6fd" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M 256 256 L 256 140 L 380 140" stroke="#bae6fd" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Water drop with gauge / pulse -->
+  <circle cx="256" cy="256" r="44" fill="#ffffff" filter="drop-shadow(0px 8px 16px rgba(0,0,0,0.2))"/>
+  <path d="M 256 230 C 242 248 238 258 238 266 C 238 276 246 284 256 284 C 266 284 274 276 274 266 C 274 258 270 248 256 230 Z" fill="#0284c7"/>
+  <circle cx="80" cy="256" r="20" fill="#38bdf8"/>
+  <circle cx="432" cy="380" r="24" fill="#10b981"/>
+  <circle cx="380" cy="140" r="18" fill="#38bdf8"/>
+</svg>
