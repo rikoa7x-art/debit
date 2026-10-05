@@ -1,5 +1,5 @@
 // ─── Versi cache: naikkan angka ini setiap kali deploy ulang ───
-const CACHE_NAME = 'subang-pipe-monitoring-v7';
+const CACHE_NAME = 'subang-pipe-monitoring-v8';
 
 // Deteksi base path secara otomatis (misal '/debit/' di GitHub Pages atau '/' di localhost)
 const BASE = self.location.pathname.replace(/sw\.js$/, '');
