@@ -5,18 +5,11 @@ import {
   AlertTriangle,
   Droplets,
   Gauge,
-  Camera,
   Trash2,
   Save,
-  ArrowRight,
   Info,
   Calendar,
-  UserCheck,
-  Check,
-  UploadCloud,
-  ShieldAlert,
-  Activity,
-  Zap
+  Check
 } from 'lucide-react';
 import {
   analyzeFlowStatus,
@@ -24,7 +17,6 @@ import {
   analyzeVelocityStatus,
   analyzePressureStatus,
   analyzeHydraulicDiagnostics,
-  formatFlow,
   formatDateTime
 } from '../utils/calculations';
 
@@ -46,12 +38,6 @@ export default function InspectionModal({
   const [flowInput, setFlowInput] = useState('');
   const [pressureInput, setPressureInput] = useState('');
   const [method, setMethod] = useState('Clamp-on Ultrasonic Flowmeter');
-  const [condition, setCondition] = useState('Normal / Baik');
-  const [surveyor, setSurveyor] = useState(
-    () => localStorage.getItem('last_surveyor_name') || 'Petugas Lapangan'
-  );
-  const [notes, setNotes] = useState('');
-  const [photoData, setPhotoData] = useState(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Populate form if existing measurement
@@ -60,16 +46,9 @@ export default function InspectionModal({
       setFlowInput(existingMeasurement.actualFlow !== undefined ? existingMeasurement.actualFlow.toString() : '');
       setPressureInput(existingMeasurement.actualPressure !== undefined && existingMeasurement.actualPressure !== null ? existingMeasurement.actualPressure.toString() : '');
       if (existingMeasurement.method) setMethod(existingMeasurement.method);
-      if (existingMeasurement.physicalCondition) setCondition(existingMeasurement.physicalCondition);
-      if (existingMeasurement.surveyor) setSurveyor(existingMeasurement.surveyor);
-      if (existingMeasurement.notes) setNotes(existingMeasurement.notes);
-      if (existingMeasurement.photo) setPhotoData(existingMeasurement.photo);
     } else {
       setFlowInput('');
       setPressureInput('');
-      setCondition('Normal / Baik');
-      setNotes('');
-      setPhotoData(null);
     }
   }, [pipe, existingMeasurement]);
 
@@ -102,47 +81,11 @@ export default function InspectionModal({
     diameter: pipe.diameter
   });
 
-  // Handle Photo input — kompresi via Canvas sebelum simpan ke localStorage
-  const handlePhotoUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const img = new Image();
-      img.onload = () => {
-        // Resize max 800px (hemat ~95% ukuran vs foto asli kamera Android)
-        const MAX_PX = 800;
-        let { width, height } = img;
-        if (width > height && width > MAX_PX) {
-          height = Math.round((height * MAX_PX) / width);
-          width = MAX_PX;
-        } else if (height > MAX_PX) {
-          width = Math.round((width * MAX_PX) / height);
-          height = MAX_PX;
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        // JPEG quality 0.65 → sekitar 50–120 KB per foto
-        setPhotoData(canvas.toDataURL('image/jpeg', 0.65));
-      };
-      img.src = evt.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleSubmit = (e) => {
     e.preventDefault();
     if (actualFlowLps === null || isNaN(actualFlowLps)) {
       alert('Silakan masukkan nilai debit air lapangan yang valid.');
       return;
-    }
-
-    // Persist surveyor name for convenience
-    if (surveyor) {
-      localStorage.setItem('last_surveyor_name', surveyor);
     }
 
     const payload = {
@@ -152,10 +95,6 @@ export default function InspectionModal({
       actualHeadloss: actualHeadloss !== null ? Number(actualHeadloss.toFixed(2)) : null,
       unitUsed: unit,
       method,
-      physicalCondition: condition,
-      surveyor,
-      notes,
-      photo: photoData,
       measuredAt: existingMeasurement?.measuredAt || new Date().toISOString()
     };
 
@@ -226,7 +165,7 @@ export default function InspectionModal({
                 </div>
                 <div className="text-[9px] text-slate-400 font-mono">
                   {actualFlowLps !== null ? (
-                    <span className="text-emerald-400 font-bold">Aktual: {actualFlowLps.toFixed(2)}</span>
+                    <span className="text-emerald-400 font-bold">Akt: {actualFlowLps.toFixed(2)}</span>
                   ) : (
                     'Desain (L/s)'
                   )}
@@ -241,7 +180,7 @@ export default function InspectionModal({
                 </div>
                 <div className="text-[9px] text-slate-400 font-mono">
                   {actualPressureVal !== null ? (
-                    <span className="text-emerald-400 font-bold">Aktual: {actualPressureVal.toFixed(2)} bar</span>
+                    <span className="text-emerald-400 font-bold">Akt: {actualPressureVal.toFixed(2)} bar</span>
                   ) : (
                     'Desain (bar)'
                   )}
@@ -334,7 +273,7 @@ export default function InspectionModal({
             )}
           </div>
 
-          {/* Form Input Lapangan */}
+          {/* Form Input Lapangan - Simpel & Praktis */}
           <form id="inspectionForm" onSubmit={handleSubmit} className="space-y-3.5">
             {/* Input Debit Lapangan */}
             <div>
@@ -347,7 +286,7 @@ export default function InspectionModal({
                   <button
                     type="button"
                     onClick={() => setUnit('lps')}
-                    className={`px-2 py-0.5 rounded-md font-medium transition ${
+                    className={`px-2.5 py-1 rounded-md font-medium transition ${
                       unit === 'lps' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
                     }`}
                   >
@@ -356,7 +295,7 @@ export default function InspectionModal({
                   <button
                     type="button"
                     onClick={() => setUnit('m3h')}
-                    className={`px-2 py-0.5 rounded-md font-medium transition ${
+                    className={`px-2.5 py-1 rounded-md font-medium transition ${
                       unit === 'm3h' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
                     }`}
                   >
@@ -399,7 +338,7 @@ export default function InspectionModal({
                     placeholder={`Desain: ${designPressure.toFixed(1)}`}
                     value={pressureInput}
                     onChange={(e) => setPressureInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none"
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2.5 text-sm font-mono text-white placeholder-slate-600 focus:outline-none"
                   />
                   <span className="absolute right-3 top-2.5 text-[10px] text-slate-400 font-mono">bar</span>
                 </div>
@@ -412,7 +351,7 @@ export default function InspectionModal({
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-2 py-2 text-xs text-white focus:outline-none"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-2 py-2.5 text-xs text-white focus:outline-none"
                 >
                   <option value="Clamp-on Ultrasonic Flowmeter">Ultrasonic Clamp-on</option>
                   <option value="Electromagnetic Flowmeter">Electromagnetic Meter</option>
@@ -421,96 +360,6 @@ export default function InspectionModal({
                   <option value="Manual / Bak Ukur">Manual / Bak Ukur</option>
                 </select>
               </div>
-            </div>
-
-            {/* Kondisi Fisik Lapangan */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Kondisi Fisik Pipa di Lapangan
-              </label>
-              <select
-                value={condition}
-                onChange={(e) => setCondition(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-              >
-                <option value="Normal / Baik">Normal / Kondisi Baik</option>
-                <option value="Rembesan di Sambungan Tee/Bend">Rembesan di Sambungan (Joint Leak)</option>
-                <option value="Pipa Bocor / Ambles">Pipa Retak / Bocor Fisik</option>
-                <option value="Indikasi Sedimen / Endapan">Indikasi Endapan Sedimen</option>
-                <option value="Katup Gate Valve Rusak / Macet">Katup Valve Rusak / Tercekik</option>
-                <option value="Indikasi Sambungan Ilegal">Dugaan Sambungan Tak Berizin</option>
-              </select>
-            </div>
-
-            {/* Nama Surveyor */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Petugas / Tim Surveyor
-              </label>
-              <input
-                type="text"
-                placeholder="Nama surveyor..."
-                value={surveyor}
-                onChange={(e) => setSurveyor(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none"
-              />
-            </div>
-
-            {/* Catatan Lapangan */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Catatan Temuan Lapangan
-              </label>
-              <textarea
-                rows={2}
-                placeholder="Catatan patok STA, titik rembesan, kondisi tanah, dll..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none resize-none"
-              />
-            </div>
-
-            {/* Foto Bukti Lapangan */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
-                <span>Foto Bukti Fisik Lapangan</span>
-                {photoData && (
-                  <button
-                    type="button"
-                    onClick={() => setPhotoData(null)}
-                    className="text-[10px] text-rose-400 hover:underline"
-                  >
-                    Hapus Foto
-                  </button>
-                )}
-              </label>
-
-              {photoData ? (
-                <div className="relative rounded-xl overflow-hidden border border-slate-700 max-h-36 bg-black">
-                  <img
-                    src={photoData}
-                    alt="Bukti lapangan"
-                    className="w-full h-36 object-cover"
-                  />
-                </div>
-              ) : (
-                <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl cursor-pointer bg-slate-950/60 hover:bg-slate-900 transition text-center">
-                  <Camera className="w-5 h-5 text-sky-400 mb-1" />
-                  <span className="text-xs text-slate-300 font-medium">
-                    Ambil Foto / Upload Gambar
-                  </span>
-                  <span className="text-[10px] text-slate-500 mt-0.5">
-                    Kamera HP atau dari galeri
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                </label>
-              )}
             </div>
 
             {/* Previous Inspection Stamp if available */}
