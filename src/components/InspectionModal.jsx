@@ -13,9 +13,20 @@ import {
   Calendar,
   UserCheck,
   Check,
-  UploadCloud
+  UploadCloud,
+  ShieldAlert,
+  Activity,
+  Zap
 } from 'lucide-react';
-import { analyzeFlowStatus, formatFlow, formatDateTime } from '../utils/calculations';
+import {
+  analyzeFlowStatus,
+  calculateVelocity,
+  analyzeVelocityStatus,
+  analyzePressureStatus,
+  analyzeHydraulicDiagnostics,
+  formatFlow,
+  formatDateTime
+} from '../utils/calculations';
 
 export default function InspectionModal({
   pipe,
@@ -27,6 +38,8 @@ export default function InspectionModal({
   if (!pipe) return null;
 
   const designFlow = Math.abs(pipe.flowRate || 0);
+  const designPressure = pipe._designPressure || 2.4;
+  const designVelocity = pipe.velocity || 0;
 
   // Unit toggle: 'lps' (L/s) or 'm3h' (m³/h)
   const [unit, setUnit] = useState('lps');
@@ -45,7 +58,7 @@ export default function InspectionModal({
   useEffect(() => {
     if (existingMeasurement) {
       setFlowInput(existingMeasurement.actualFlow !== undefined ? existingMeasurement.actualFlow.toString() : '');
-      setPressureInput(existingMeasurement.actualPressure !== undefined ? existingMeasurement.actualPressure.toString() : '');
+      setPressureInput(existingMeasurement.actualPressure !== undefined && existingMeasurement.actualPressure !== null ? existingMeasurement.actualPressure.toString() : '');
       if (existingMeasurement.method) setMethod(existingMeasurement.method);
       if (existingMeasurement.physicalCondition) setCondition(existingMeasurement.physicalCondition);
       if (existingMeasurement.surveyor) setSurveyor(existingMeasurement.surveyor);
@@ -68,7 +81,26 @@ export default function InspectionModal({
     ? numericInput / 3.6 // 1 L/s = 3.6 m3/h
     : numericInput;
 
-  const analysis = analyzeFlowStatus(designFlow, actualFlowLps);
+  const actualPressureVal = pressureInput !== '' && !isNaN(parseFloat(pressureInput))
+    ? parseFloat(pressureInput)
+    : null;
+
+  const actualVelocity = actualFlowLps !== null
+    ? calculateVelocity(actualFlowLps, pipe.diameter)
+    : null;
+
+  // Hazen-Williams Headloss approximation: hf_act ≈ hf_des * (Q_act / Q_des)^1.852
+  const actualHeadloss = (pipe.headloss && designFlow > 0 && actualFlowLps !== null)
+    ? pipe.headloss * Math.pow(actualFlowLps / designFlow, 1.852)
+    : null;
+
+  const diagnostics = analyzeHydraulicDiagnostics({
+    designFlow,
+    actualFlow: actualFlowLps,
+    designPressure,
+    actualPressure: actualPressureVal,
+    diameter: pipe.diameter
+  });
 
   // Handle Photo input — kompresi via Canvas sebelum simpan ke localStorage
   const handlePhotoUpload = (e) => {
@@ -115,7 +147,9 @@ export default function InspectionModal({
 
     const payload = {
       actualFlow: Number(actualFlowLps.toFixed(2)),
-      actualPressure: pressureInput ? Number(parseFloat(pressureInput).toFixed(2)) : null,
+      actualPressure: actualPressureVal !== null ? Number(actualPressureVal.toFixed(2)) : null,
+      actualVelocity: actualVelocity !== null ? Number(actualVelocity.toFixed(2)) : null,
+      actualHeadloss: actualHeadloss !== null ? Number(actualHeadloss.toFixed(2)) : null,
       unitUsed: unit,
       method,
       physicalCondition: condition,
@@ -155,7 +189,7 @@ export default function InspectionModal({
                   {pipe._fromLabel || 'J'} → {pipe._toLabel || 'J'}
                 </h3>
                 <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-slate-700 text-slate-300">
-                  {pipe.diameter} mm
+                  Ø {pipe.diameter} mm
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-mono">
@@ -178,74 +212,124 @@ export default function InspectionModal({
             <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
               <span className="text-slate-400 font-medium flex items-center gap-1.5">
                 <Info className="w-3.5 h-3.5 text-sky-400" />
-                Data Desain Rencana (Model)
+                Matriks Parameter Hidrolis (Model vs Aktual)
               </span>
               <span className="text-slate-400 font-mono text-[11px]">Subang ADB</span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+              {/* Debit Q */}
               <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800">
-                <div className="text-[10px] text-slate-400 uppercase font-semibold">Debit Rencana (Q)</div>
+                <div className="text-[10px] text-slate-400 uppercase font-semibold">Debit (Q)</div>
                 <div className="text-base font-bold text-sky-400 font-mono mt-0.5">
                   {designFlow.toFixed(2)}
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">L/detik</div>
-              </div>
-
-              <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800">
-                <div className="text-[10px] text-slate-400 uppercase font-semibold">Tekanan Rencana (P)</div>
-                <div className="text-base font-bold text-amber-400 font-mono mt-0.5">
-                  {(pipe._designPressure || 2.4).toFixed(2)}
+                <div className="text-[9px] text-slate-400 font-mono">
+                  {actualFlowLps !== null ? (
+                    <span className="text-emerald-400 font-bold">Aktual: {actualFlowLps.toFixed(2)}</span>
+                  ) : (
+                    'Desain (L/s)'
+                  )}
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">bar</div>
               </div>
 
+              {/* Tekanan P */}
+              <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800">
+                <div className="text-[10px] text-slate-400 uppercase font-semibold">Tekanan (P)</div>
+                <div className="text-base font-bold text-amber-400 font-mono mt-0.5">
+                  {designPressure.toFixed(2)}
+                </div>
+                <div className="text-[9px] text-slate-400 font-mono">
+                  {actualPressureVal !== null ? (
+                    <span className="text-emerald-400 font-bold">Aktual: {actualPressureVal.toFixed(2)} bar</span>
+                  ) : (
+                    'Desain (bar)'
+                  )}
+                </div>
+              </div>
+
+              {/* Kecepatan v */}
               <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">Kecepatan (v)</div>
                 <div className="text-base font-bold text-slate-200 font-mono mt-0.5">
-                  {pipe.velocity ? pipe.velocity.toFixed(2) : '-'}
+                  {designVelocity ? designVelocity.toFixed(2) : '-'}
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">m/detik</div>
+                <div className="text-[9px] text-slate-400 font-mono">
+                  {actualVelocity !== null ? (
+                    <span className={`font-bold ${actualVelocity > 2.0 ? 'text-rose-400' : actualVelocity < 0.3 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      Akt: {actualVelocity.toFixed(2)} m/s
+                    </span>
+                  ) : (
+                    'Desain (m/s)'
+                  )}
+                </div>
               </div>
 
+              {/* Headloss */}
               <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">Headloss</div>
                 <div className="text-base font-bold text-slate-200 font-mono mt-0.5">
                   {pipe.headloss ? pipe.headloss.toFixed(2) : '-'}
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">meter</div>
+                <div className="text-[9px] text-slate-400 font-mono">
+                  {actualHeadloss !== null ? (
+                    <span className="text-sky-300 font-bold">Akt: ~{actualHeadloss.toFixed(2)} m</span>
+                  ) : (
+                    'Desain (m)'
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Real-time comparison badge when input is given */}
+            {/* Diagnosa Terpadu Hidrolika Rekayasa saat ada input debit */}
             {actualFlowLps !== null && !isNaN(actualFlowLps) && (
               <div
-                className={`p-3 rounded-xl border flex flex-col gap-1 transition-all ${
-                  analysis.status === 'match'
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-                    : analysis.status === 'warning'
-                    ? 'bg-amber-950/40 border-amber-500/40 text-amber-200'
-                    : analysis.status === 'leak_alert'
-                    ? 'bg-rose-950/40 border-rose-500/40 text-rose-200'
-                    : 'bg-purple-950/40 border-purple-500/40 text-purple-200'
+                className={`p-3.5 rounded-xl border flex flex-col gap-2 transition-all ${
+                  diagnostics.severity === 'critical'
+                    ? 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                    : diagnostics.severity === 'warning'
+                    ? 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+                    : 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-xs">
-                    {analysis.status === 'match' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                    {analysis.status === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-400" />}
-                    {analysis.status === 'leak_alert' && <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />}
-                    {analysis.status === 'overflow_alert' && <Info className="w-4 h-4 text-purple-400" />}
-                    <span>Status: {analysis.label}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-xs">
+                    {diagnostics.severity === 'critical' && <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse shrink-0" />}
+                    {diagnostics.severity === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />}
+                    {diagnostics.severity === 'normal' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                    <span>{diagnostics.title}</span>
                   </div>
-                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-black/40">
-                    {analysis.percentDeviation >= 0 ? '+' : ''}
-                    {analysis.percentDeviation.toFixed(1)}%
+                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-black/40 shrink-0">
+                    ΔQ {diagnostics.flowAnalysis.percentDeviation >= 0 ? '+' : ''}
+                    {diagnostics.flowAnalysis.percentDeviation.toFixed(1)}%
                   </span>
                 </div>
-                <p className="text-[11px] opacity-90 leading-relaxed mt-0.5">
-                  {analysis.description}
+
+                <p className="text-[11px] opacity-90 leading-relaxed">
+                  {diagnostics.summary}
                 </p>
+
+                {/* Status Badges Row (SNI Kecepatan & PDAM Tekanan) */}
+                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-white/10 text-[10px]">
+                  {diagnostics.velocityAnalysis && (
+                    <span className={`px-2 py-0.5 rounded-md border font-medium ${diagnostics.velocityAnalysis.badgeClass}`}>
+                      v: {diagnostics.velocityAnalysis.label}
+                    </span>
+                  )}
+                  {diagnostics.pressureAnalysis && diagnostics.pressureAnalysis.status !== 'unmeasured' && (
+                    <span className={`px-2 py-0.5 rounded-md border font-medium ${diagnostics.pressureAnalysis.badgeClass}`}>
+                      P: {diagnostics.pressureAnalysis.label}
+                    </span>
+                  )}
+                </div>
+
+                {/* Rekomendasi Tindakan Lapangan */}
+                {diagnostics.action && (
+                  <div className="bg-black/30 p-2 rounded-lg border border-white/10 text-[11px] flex items-start gap-1.5 mt-0.5">
+                    <span className="shrink-0 font-bold">💡 Tindakan:</span>
+                    <span className="text-slate-200">{diagnostics.action}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -306,18 +390,18 @@ export default function InspectionModal({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Tekanan (Opsional)
+                  Tekanan Aktual (Opsional)
                 </label>
                 <div className="relative">
                   <input
                     type="number"
                     step="0.1"
-                    placeholder="Contoh: 2.5"
+                    placeholder={`Desain: ${designPressure.toFixed(1)}`}
                     value={pressureInput}
                     onChange={(e) => setPressureInput(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none"
                   />
-                  <span className="absolute right-3 top-2.5 text-[10px] text-slate-400">bar</span>
+                  <span className="absolute right-3 top-2.5 text-[10px] text-slate-400 font-mono">bar</span>
                 </div>
               </div>
 

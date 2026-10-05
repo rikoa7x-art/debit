@@ -12,9 +12,17 @@ import {
   Download,
   RotateCcw,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  Zap,
+  Info
 } from 'lucide-react';
-import { analyzeFlowStatus } from '../utils/calculations';
+import {
+  analyzeFlowStatus,
+  calculateVelocity,
+  analyzeVelocityStatus,
+  analyzePressureStatus,
+  analyzeHydraulicDiagnostics
+} from '../utils/calculations';
 
 export default function DashboardView({
   networkData,
@@ -45,6 +53,16 @@ export default function DashboardView({
     let totalActualPressureMeasured = 0;
     let measuredPressureCount = 0;
 
+    // SNI 7509 Velocity Compliance counts
+    let optimalVelocityCount = 0;
+    let sedimentRiskCount = 0;
+    let hammerRiskCount = 0;
+
+    // PDAM Pressure Compliance counts
+    let optimalPressureCount = 0;
+    let lowPressureCount = 0;
+    let overpressureCount = 0;
+
     const resNodeIds = new Set(
       (networkData?.nodes || []).filter(n => n.type === 'reservoir').map(n => n.id)
     );
@@ -72,13 +90,35 @@ export default function DashboardView({
         totalDesignFlowMeasured += designFlow;
         totalActualFlowMeasured += actualFlow;
 
+        // Velocity analysis
+        const vActual = calculateVelocity(actualFlow, pipe.diameter);
+        const vStatus = analyzeVelocityStatus(vActual);
+        if (vStatus.status === 'optimal') optimalVelocityCount++;
+        else if (vStatus.status === 'sediment_risk') sedimentRiskCount++;
+        else if (vStatus.status === 'hammer_risk') hammerRiskCount++;
+
+        // Pressure analysis
         if (meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(meas.actualPressure)) {
+          const actP = Number(meas.actualPressure);
           totalDesignPressureMeasured += designPressure;
-          totalActualPressureMeasured += Number(meas.actualPressure);
+          totalActualPressureMeasured += actP;
           measuredPressureCount++;
+
+          const pStatus = analyzePressureStatus(actP, designPressure);
+          if (pStatus.status === 'optimal_pressure') optimalPressureCount++;
+          else if (pStatus.status === 'low_pressure') lowPressureCount++;
+          else if (pStatus.status === 'high_pressure') overpressureCount++;
         }
 
         const analysis = analyzeFlowStatus(designFlow, actualFlow);
+        const diagnostics = analyzeHydraulicDiagnostics({
+          designFlow,
+          actualFlow,
+          designPressure,
+          actualPressure: meas.actualPressure,
+          diameter: pipe.diameter
+        });
+
         if (analysis.status === 'match') matchCount++;
         else if (analysis.status === 'warning') warningCount++;
         else if (analysis.status === 'leak_alert') {
@@ -91,6 +131,8 @@ export default function DashboardView({
               _designPressure: designPressure
             },
             analysis,
+            diagnostics,
+            vActual,
             meas
           });
         } else if (analysis.status === 'overflow_alert') overflowCount++;
@@ -121,6 +163,12 @@ export default function DashboardView({
       measuredPressureCount,
       avgDesignPressure,
       avgActualPressure,
+      optimalVelocityCount,
+      sedimentRiskCount,
+      hammerRiskCount,
+      optimalPressureCount,
+      lowPressureCount,
+      overpressureCount,
       criticalLeaks
     };
   }, [networkData, measurements, nodeMap, totalPipes]);
@@ -136,7 +184,7 @@ export default function DashboardView({
               Monitoring Jaringan Subang ADB
             </h2>
             <p className="text-xs text-slate-400">
-              Evaluasi Kesesuaian Debit Model vs Debit Aktual Lapangan
+              Evaluasi Hidrolis: Model Desain vs Pengukuran Lapangan
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -144,7 +192,7 @@ export default function DashboardView({
               Pasokan Utama: {stats.mainSupplyQ.toFixed(1)} L/s
             </span>
             <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2.5 py-1 rounded-full border border-slate-700">
-              235 Pipa
+              {totalPipes} Pipa
             </span>
           </div>
         </div>
@@ -226,6 +274,81 @@ export default function DashboardView({
           </div>
         </div>
       </div>
+
+      {/* Hydraulic Engineering Standards Compliance (SNI 7509:2011 & PDAM) */}
+      {stats.measuredCount > 0 && (
+        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <Zap className="w-4 h-4 text-amber-400" />
+              Kesesuaian Standar Teknis Hidrolika (SNI 7509 / PDAM)
+            </h3>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {stats.measuredCount} pipa terukur
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Kecepatan Aliran (v) */}
+            <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-300">Kecepatan Aliran (v)</span>
+                <span className="text-[10px] text-slate-500 font-mono">v = 4Q/(πD²)</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
+                <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2">
+                  <div className="text-emerald-400 font-bold font-mono text-base">
+                    {stats.optimalVelocityCount}
+                  </div>
+                  <div className="text-emerald-300 text-[9px] mt-0.5">Optimal (0.3-2.0 m/s)</div>
+                </div>
+                <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-2">
+                  <div className="text-amber-400 font-bold font-mono text-base">
+                    {stats.sedimentRiskCount}
+                  </div>
+                  <div className="text-amber-300 text-[9px] mt-0.5">Endapan (&lt;0.3 m/s)</div>
+                </div>
+                <div className="bg-rose-950/40 border border-rose-500/30 rounded-xl p-2">
+                  <div className="text-rose-400 font-bold font-mono text-base">
+                    {stats.hammerRiskCount}
+                  </div>
+                  <div className="text-rose-300 text-[9px] mt-0.5">Hammer (&gt;2.0 m/s)</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sisa Tekanan (P) */}
+            <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-300">Sisa Tekanan Pelayanan (P)</span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {stats.measuredPressureCount} titik termonitor
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
+                <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2">
+                  <div className="text-emerald-400 font-bold font-mono text-base">
+                    {stats.optimalPressureCount}
+                  </div>
+                  <div className="text-emerald-300 text-[9px] mt-0.5">Aman (0.7-6.0 bar)</div>
+                </div>
+                <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-2">
+                  <div className="text-amber-400 font-bold font-mono text-base">
+                    {stats.lowPressureCount}
+                  </div>
+                  <div className="text-amber-300 text-[9px] mt-0.5">Rendah (&lt;0.7 bar)</div>
+                </div>
+                <div className="bg-rose-950/40 border border-rose-500/30 rounded-xl p-2">
+                  <div className="text-rose-400 font-bold font-mono text-base">
+                    {stats.overpressureCount}
+                  </div>
+                  <div className="text-rose-300 text-[9px] mt-0.5">Over (&gt;6.0 bar)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Water Balance Comparison (Debit Rencana vs Debit Aktual) */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-4 space-y-3">
@@ -310,38 +433,55 @@ export default function DashboardView({
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
               <ShieldAlert className="w-4 h-4 text-rose-400" />
-              Prioritas Investigasi Kebocoran / Hambatan
+              Prioritas Investigasi Kebocoran & Hambatan
             </h3>
             <span className="text-[10px] bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full font-bold">
               {stats.criticalLeaks.length} Titik
             </span>
           </div>
 
-          <div className="space-y-2">
-            {stats.criticalLeaks.slice(0, 4).map(({ pipe, analysis, meas }) => (
+          <div className="space-y-2.5">
+            {stats.criticalLeaks.slice(0, 5).map(({ pipe, analysis, diagnostics, vActual, meas }) => (
               <div
                 key={pipe.id}
                 onClick={() => onSelectPipe(pipe)}
-                className="bg-slate-950/80 hover:bg-slate-950 border border-rose-900/40 hover:border-rose-500 rounded-2xl p-3 flex items-center justify-between cursor-pointer transition"
+                className="bg-slate-950/80 hover:bg-slate-950 border border-rose-900/40 hover:border-rose-500 rounded-2xl p-3 flex flex-col gap-2 cursor-pointer transition shadow-md"
               >
-                <div>
-                  <div className="font-bold text-xs text-white">
-                    {pipe._fromLabel} → {pipe._toLabel} ({pipe.diameter}mm)
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                    Model: {Math.abs(pipe.flowRate || 0)} L/s ➔ Aktual:{' '}
-                    <strong className="text-rose-400">{meas.actualFlow} L/s</strong> (
-                    {analysis.percentDeviation.toFixed(1)}%)
-                  </div>
-                  {meas.physicalCondition && (
-                    <div className="text-[10px] text-amber-300 mt-1">
-                      Kondisi: {meas.physicalCondition}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                      <span>{pipe._fromLabel} → {pipe._toLabel}</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-slate-800 text-slate-300">
+                        Ø {pipe.diameter}mm
+                      </span>
                     </div>
-                  )}
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      Model: {Math.abs(pipe.flowRate || 0).toFixed(1)} L/s ➔ Aktual:{' '}
+                      <strong className="text-rose-400">{Number(meas.actualFlow).toFixed(1)} L/s</strong> (
+                      {analysis.percentDeviation.toFixed(1)}%)
+                    </div>
+                  </div>
+                  <button className="text-xs text-sky-400 font-semibold p-1 hover:text-sky-300 shrink-0">
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
-                <button className="text-xs text-sky-400 font-semibold p-1 hover:text-sky-300">
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+
+                {/* Hydraulic Diagnostics Bar */}
+                <div className="flex items-center justify-between gap-2 bg-black/40 px-2.5 py-1.5 rounded-xl border border-white/5 text-[10px]">
+                  <span className="text-rose-300 font-medium">
+                    {diagnostics.title}
+                  </span>
+                  <span className="font-mono text-slate-400 shrink-0">
+                    v: {vActual ? vActual.toFixed(2) : '-'} m/s
+                    {meas.actualPressure ? ` | P: ${Number(meas.actualPressure).toFixed(1)}b` : ''}
+                  </span>
+                </div>
+
+                {diagnostics.action && (
+                  <div className="text-[10px] text-slate-300 bg-rose-950/30 border border-rose-500/20 px-2 py-1 rounded-lg">
+                    💡 <strong className="text-rose-200">Tindakan:</strong> {diagnostics.action}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -378,10 +518,10 @@ export default function DashboardView({
         {stats.measuredCount > 0 && (
           <button
             onClick={onClearData}
-            className="w-full text-slate-500 hover:text-rose-400 py-2 text-xs flex items-center justify-center gap-1.5 transition"
+            className="w-full bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-900/50 font-semibold py-2.5 px-4 rounded-2xl text-xs flex items-center justify-center gap-2 transition"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Hapus Semua Pengukuran Lapangan
+            Reset Seluruh Data Pengukuran Lapangan
           </button>
         )}
       </div>
