@@ -40,10 +40,28 @@ export default function MapComponent({
   // Network Telemetry Summary for HUD
   const telemetry = useMemo(() => {
     if (!networkData?.pipes) {
-      return { totalDesignQ: 0, totalActualQ: 0, avgPressure: 0, measuredCount: 0, avgActualPressure: 0, measuredPressureCount: 0 };
+      return {
+        mainSupplyQ: 0,
+        actualMainSupplyQ: 0,
+        hasActualSupply: false,
+        totalDesignQ: 0,
+        totalActualQ: 0,
+        avgPressure: 0,
+        measuredCount: 0,
+        avgActualPressure: 0,
+        measuredPressureCount: 0
+      };
     }
 
     const nodeMap = new Map((networkData.nodes || []).map(n => [n.id, n]));
+    const resNodeIds = new Set(
+      (networkData.nodes || []).filter(n => n.type === 'reservoir').map(n => n.id)
+    );
+
+    let mainSupplyQ = 0;
+    let actualMainSupplyQ = 0;
+    let hasActualSupply = false;
+
     let totalDesignQ = 0;
     let totalActualQ = 0;
     let measuredCount = 0;
@@ -60,12 +78,27 @@ export default function MapComponent({
     });
 
     (networkData.pipes || []).forEach(pipe => {
-      totalDesignQ += Math.abs(pipe.flowRate || 0);
+      const designQ = Math.abs(pipe.flowRate || 0);
+      totalDesignQ += designQ;
+
+      // Pipa keluaran Reservoir R1 & R2 (Pasokan Utama Jaringan Subang ADB: 140.6 L/s)
+      const isSupplyPipe = resNodeIds.has(pipe.startNodeId) || resNodeIds.has(pipe.endNodeId);
+      if (isSupplyPipe) {
+        mainSupplyQ += designQ;
+      }
+
       const meas = measurements[pipe.id];
       if (meas && meas.actualFlow !== undefined) {
         totalActualQ += Number(meas.actualFlow);
         measuredCount++;
+        if (isSupplyPipe) {
+          actualMainSupplyQ += Number(meas.actualFlow);
+          hasActualSupply = true;
+        }
+      } else if (isSupplyPipe) {
+        actualMainSupplyQ += designQ;
       }
+
       if (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(meas.actualPressure)) {
         totalActualPressure += Number(meas.actualPressure);
         measuredPressureCount++;
@@ -73,6 +106,9 @@ export default function MapComponent({
     });
 
     return {
+      mainSupplyQ,
+      actualMainSupplyQ,
+      hasActualSupply,
       totalDesignQ,
       totalActualQ,
       avgPressure: pressureCount > 0 ? totalPressure / pressureCount : 2.4,
@@ -461,21 +497,21 @@ export default function MapComponent({
 
       {/* Floating Telemetry Strip - Angka Data Debit & Tekanan Langsung di Layar */}
       <div className="absolute top-2.5 left-2.5 right-16 sm:right-auto sm:max-w-md z-20 bg-slate-900/95 backdrop-blur-md rounded-2xl p-2 sm:p-2.5 border border-slate-700/80 shadow-2xl flex items-center justify-between gap-2 text-xs">
-        {/* Debit Q */}
+        {/* Debit Pasokan Utama (Q) */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0 border border-sky-500/30">
             <Droplets className="w-4 h-4 fill-sky-400/20" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1">
-              <span className="text-[9px] uppercase font-bold text-sky-400 tracking-wider">Debit (Q)</span>
+              <span className="text-[9px] uppercase font-bold text-sky-400 tracking-wider">Pasokan Utama (Q)</span>
               <span className="text-[8px] bg-sky-950 text-sky-300 px-1 py-0.2 rounded border border-sky-800 font-mono">L/s</span>
             </div>
-            <div className="font-mono font-bold text-white text-xs truncate">
-              <span>{telemetry.totalDesignQ.toFixed(1)}</span>
-              {telemetry.totalActualQ > 0 && (
+            <div className="font-mono font-bold text-white text-xs truncate" title="Debit Pasokan Utama Sumber Reservoir R1 & R2: 140.6 L/detik">
+              <span>{telemetry.mainSupplyQ.toFixed(1)}</span>
+              {telemetry.hasActualSupply && (
                 <span className="text-emerald-400 text-[11px] ml-1.5 font-bold">
-                  ➔ {telemetry.totalActualQ.toFixed(1)}
+                  ➔ {telemetry.actualMainSupplyQ.toFixed(1)}
                 </span>
               )}
             </div>

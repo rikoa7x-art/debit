@@ -45,6 +45,11 @@ export default function DashboardView({
     let totalActualPressureMeasured = 0;
     let measuredPressureCount = 0;
 
+    const resNodeIds = new Set(
+      (networkData?.nodes || []).filter(n => n.type === 'reservoir').map(n => n.id)
+    );
+    let mainSupplyQ = 0;
+
     const criticalLeaks = [];
 
     (networkData?.pipes || []).forEach(pipe => {
@@ -53,6 +58,10 @@ export default function DashboardView({
       const pFrom = fromNode?.pressure ?? null;
       const pTo = toNode?.pressure ?? null;
       const designPressure = pFrom !== null && pTo !== null ? (pFrom + pTo) / 2 : (pFrom ?? pTo ?? 2.4);
+
+      if (resNodeIds.has(pipe.startNodeId) || resNodeIds.has(pipe.endNodeId)) {
+        mainSupplyQ += Math.abs(pipe.flowRate || 0);
+      }
 
       const meas = measurements[pipe.id];
       if (meas && meas.actualFlow !== undefined) {
@@ -97,6 +106,7 @@ export default function DashboardView({
     const avgActualPressure = measuredPressureCount > 0 ? totalActualPressureMeasured / measuredPressureCount : 0;
 
     return {
+      mainSupplyQ,
       measuredCount,
       unmeasuredCount: totalPipes - measuredCount,
       matchCount,
@@ -119,7 +129,7 @@ export default function DashboardView({
     <div className="flex flex-col h-full bg-slate-950 text-slate-100 overflow-y-auto p-4 space-y-4 pb-28">
       {/* Top Header Card */}
       <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-4 rounded-3xl border border-slate-700/80 shadow-xl space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <Activity className="w-5 h-5 text-sky-400" />
@@ -129,9 +139,14 @@ export default function DashboardView({
               Evaluasi Kesesuaian Debit Model vs Debit Aktual Lapangan
             </p>
           </div>
-          <span className="text-xs bg-sky-500/20 text-sky-400 font-mono px-2.5 py-1 rounded-full border border-sky-500/30">
-            235 Segmen Pipa
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs bg-sky-500/20 text-sky-400 font-mono px-2.5 py-1 rounded-full border border-sky-500/30">
+              Pasokan Utama: {stats.mainSupplyQ.toFixed(1)} L/s
+            </span>
+            <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2.5 py-1 rounded-full border border-slate-700">
+              235 Pipa
+            </span>
+          </div>
         </div>
 
         {/* Inspection Progress Bar */}
