@@ -4,25 +4,28 @@ Aplikasi web mobile-first (Progressive Web App - PWA) untuk pemantauan (*monitor
 
 ---
 
-## 🚀 Cara Membuka di Handphone (Mobile Phone)
+## 🌐 Akses Online Dimana Saja (GitHub Pages)
 
-Aplikasi ini sudah berjalan di jaringan lokal Anda. Anda dapat langsung membukanya di HP dengan 2 cara:
+Aplikasi ini telah dideploy ke GitHub dan dapat dibuka langsung dari browser HP Android / PC dari mana saja:
 
-### Cara 1: Scan QR Code (Paling Cepat)
-1. Pastikan HP Anda terhubung ke jaringan **Wi-Fi yang sama** dengan komputer ini.
-2. Buka kamera HP atau aplikasi QR Scanner, lalu scan gambar QR Code:
-   - [qrcode_mobile.png](file:///c:/Users/Win%2010/Desktop/monitoring/qrcode_mobile.png)
-   - Atau klik tombol **"Buka di HP"** di pojok kanan atas aplikasi web.
+👉 **[https://rikoa7x-art.github.io/debit/](https://rikoa7x-art.github.io/debit/)**
 
-### Cara 2: Ketik URL di Browser HP
-Buka Google Chrome / Safari di HP Anda dan ketik:
+> 📱 **Cara Membuka di HP Android:**
+> 1. Buka link di atas melalui Google Chrome di HP Anda.
+> 2. Tekan menu titik tiga (**⋮**) di pojok kanan atas Chrome.
+> 3. Pilih **"Tambahkan ke Layar Utama" (Add to Home Screen)** untuk menginstal aplikasi PWA.
+> 4. Aplikasi akan tampil layaknya aplikasi native Android dan dapat digunakan secara **offline** di lapangan.
+> 5. GPS Geolocation bekerja 100% optimal karena menggunakan protokol aman **HTTPS**.
+
+---
+
+## 🚀 Cara Membuka di Jaringan Lokal (Development)
+
+Jika Anda ingin menjalankan atau memodifikasi secara lokal di komputer:
+```bash
+npm run dev
 ```
-http://10.38.180.170:5173/
-```
-*(Atau jika melalui komputer ini, buka [http://localhost:5173/](http://localhost:5173/))*.
-
-> 💡 **Tips Penggunaan Seperti Aplikasi Native di HP:**
-> Di Google Chrome (Android) atau Safari (iOS), tekan menu titik tiga / tombol Share lalu pilih **"Tambahkan ke Layar Utama" (Add to Home Screen)**. Aplikasi akan terpasang di HP Anda dan bisa dibuka secara mandiri (*standalone full screen*).
+Akses di browser lokal: [http://localhost:5173/](http://localhost:5173/)
 
 ---
 
