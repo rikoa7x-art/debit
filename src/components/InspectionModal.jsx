@@ -17,6 +17,7 @@ import {
   analyzeVelocityStatus,
   analyzePressureStatus,
   analyzeHydraulicDiagnostics,
+  estimateFlowFromPressure,
   formatDateTime
 } from '../utils/calculations';
 
@@ -64,18 +65,25 @@ export default function InspectionModal({
     ? parseFloat(pressureInput)
     : null;
 
-  const actualVelocity = actualFlowLps !== null
-    ? calculateVelocity(actualFlowLps, pipe.diameter)
+  // Jika debit tidak diukur langsung tapi ada tekanan, estimasikan debitnya via hukum hidrolika
+  const estimatedFlowFromP = (actualFlowLps === null && actualPressureVal !== null)
+    ? estimateFlowFromPressure(designFlow, actualPressureVal, designPressure)
+    : null;
+
+  const effectiveFlowLps = actualFlowLps !== null ? actualFlowLps : estimatedFlowFromP;
+
+  const actualVelocity = effectiveFlowLps !== null
+    ? calculateVelocity(effectiveFlowLps, pipe.diameter)
     : null;
 
   // Hazen-Williams Headloss approximation: hf_act ≈ hf_des * (Q_act / Q_des)^1.852
-  const actualHeadloss = (pipe.headloss && designFlow > 0 && actualFlowLps !== null)
-    ? pipe.headloss * Math.pow(actualFlowLps / designFlow, 1.852)
+  const actualHeadloss = (pipe.headloss && designFlow > 0 && effectiveFlowLps !== null)
+    ? pipe.headloss * Math.pow(effectiveFlowLps / designFlow, 1.852)
     : null;
 
   const diagnostics = analyzeHydraulicDiagnostics({
     designFlow,
-    actualFlow: actualFlowLps,
+    actualFlow: effectiveFlowLps,
     designPressure,
     actualPressure: actualPressureVal,
     diameter: pipe.diameter
@@ -83,18 +91,19 @@ export default function InspectionModal({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (actualFlowLps === null || isNaN(actualFlowLps)) {
-      alert('Silakan masukkan nilai debit air lapangan yang valid.');
+    if (actualFlowLps === null && actualPressureVal === null) {
+      alert('Silakan masukkan minimal nilai Tekanan Air (bar) atau Debit Lapangan.');
       return;
     }
 
     const payload = {
-      actualFlow: Number(actualFlowLps.toFixed(2)),
+      actualFlow: effectiveFlowLps !== null ? Number(effectiveFlowLps.toFixed(2)) : null,
       actualPressure: actualPressureVal !== null ? Number(actualPressureVal.toFixed(2)) : null,
       actualVelocity: actualVelocity !== null ? Number(actualVelocity.toFixed(2)) : null,
       actualHeadloss: actualHeadloss !== null ? Number(actualHeadloss.toFixed(2)) : null,
       unitUsed: unit,
-      method,
+      method: actualFlowLps !== null ? method : (method.includes('Manometer') || method.includes('Pressure') ? method : 'Manometer Tekanan Air (Bourdon/Digital)'),
+      isEstimatedFlow: actualFlowLps === null && estimatedFlowFromP !== null,
       measuredAt: existingMeasurement?.measuredAt || new Date().toISOString()
     };
 
@@ -275,18 +284,67 @@ export default function InspectionModal({
 
           {/* Form Input Lapangan - Simpel & Praktis */}
           <form id="inspectionForm" onSubmit={handleSubmit} className="space-y-3.5">
-            {/* Input Debit Lapangan */}
+            {/* Mode Notifikasi Fleksibel */}
+            <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-[11px] text-slate-300 flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>Cukup isi <strong>Tekanan (P)</strong> manometer, atau <strong>Debit (Q)</strong> flowmeter, atau keduanya.</span>
+            </div>
+
+            {/* Input Tekanan Air Lapangan (Manometer) */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-200 flex items-center gap-1">
-                  <span>Debit Air Aktual di Lapangan *</span>
+                <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Gauge className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Tekanan Air Lapangan (Manometer)</span>
+                </label>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  Desain: {designPressure.toFixed(1)} bar
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.05"
+                  placeholder={`Contoh: ${designPressure.toFixed(1)}`}
+                  value={pressureInput}
+                  onChange={(e) => setPressureInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-2.5 text-base font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
+                />
+                <span className="absolute right-4 top-3 text-xs text-amber-400 font-mono font-semibold">bar</span>
+              </div>
+              {actualPressureVal !== null && actualPressureVal < 0.7 && (
+                <div className="text-[10px] text-rose-400 mt-1 font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-rose-400" />
+                  Sisa tekan di bawah 0.7 bar (air tidak mampu naik ke kran warga!)
+                </div>
+              )}
+            </div>
+
+            {/* Estimasi Debit Otomatis jika hanya isi Tekanan */}
+            {estimatedFlowFromP !== null && (
+              <div className="bg-sky-950/40 border border-sky-500/30 rounded-xl p-2.5 text-xs text-sky-200 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Estimasi Debit dari Tekanan:</span>
+                </span>
+                <span className="font-mono font-bold text-sky-400">~{estimatedFlowFromP.toFixed(2)} L/s</span>
+              </div>
+            )}
+
+            {/* Input Debit Lapangan (Opsional) */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
+                  <Droplets className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Debit Aktual (Bila Ada Flowmeter)</span>
+                  <span className="text-[10px] text-slate-500 font-normal">(Opsional)</span>
                 </label>
                 {/* Unit Switcher */}
                 <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-[11px]">
                   <button
                     type="button"
                     onClick={() => setUnit('lps')}
-                    className={`px-2.5 py-1 rounded-md font-medium transition ${
+                    className={`px-2 py-0.5 rounded-md font-medium transition ${
                       unit === 'lps' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
                     }`}
                   >
@@ -295,11 +353,11 @@ export default function InspectionModal({
                   <button
                     type="button"
                     onClick={() => setUnit('m3h')}
-                    className={`px-2.5 py-1 rounded-md font-medium transition ${
+                    className={`px-2 py-0.5 rounded-md font-medium transition ${
                       unit === 'm3h' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
                     }`}
                   >
-                    m³/jam
+                    m³/j
                   </button>
                 </div>
               </div>
@@ -308,13 +366,12 @@ export default function InspectionModal({
                 <input
                   type="number"
                   step="0.01"
-                  required
-                  placeholder={`Contoh: ${designFlow.toFixed(2)}`}
+                  placeholder={`Desain: ${designFlow.toFixed(2)}`}
                   value={flowInput}
                   onChange={(e) => setFlowInput(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-4 py-3 text-lg font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-4 py-2.5 text-base font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
                 />
-                <span className="absolute right-4 top-3.5 text-xs text-slate-400 font-mono">
+                <span className="absolute right-4 top-3 text-xs text-slate-400 font-mono">
                   {unit === 'lps' ? 'L/detik' : 'm³/jam'}
                 </span>
               </div>
@@ -325,41 +382,25 @@ export default function InspectionModal({
               )}
             </div>
 
-            {/* Tekanan Air Lapangan & Metode */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Tekanan Aktual (Opsional)
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder={`Desain: ${designPressure.toFixed(1)}`}
-                    value={pressureInput}
-                    onChange={(e) => setPressureInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2.5 text-sm font-mono text-white placeholder-slate-600 focus:outline-none"
-                  />
-                  <span className="absolute right-3 top-2.5 text-[10px] text-slate-400 font-mono">bar</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Metode Pengukuran
-                </label>
-                <select
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-2 py-2.5 text-xs text-white focus:outline-none"
-                >
-                  <option value="Clamp-on Ultrasonic Flowmeter">Ultrasonic Clamp-on</option>
-                  <option value="Electromagnetic Flowmeter">Electromagnetic Meter</option>
-                  <option value="Mechanical Meter (Woltman)">Mechanical Meter</option>
-                  <option value="Pitot Tube">Pitot Tube</option>
-                  <option value="Manual / Bak Ukur">Manual / Bak Ukur</option>
-                </select>
-              </div>
+            {/* Metode Pengukuran */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Metode / Alat Ukur
+              </label>
+              <select
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
+              >
+                <option value="Manometer Analog (Bourdon Tube)">Manometer Analog (Bourdon Tube)</option>
+                <option value="Digital Pressure Gauge">Digital Pressure Gauge</option>
+                <option value="Manometer di Hidran / Kran Warga">Manometer di Hidran / Kran Warga</option>
+                <option value="Clamp-on Ultrasonic Flowmeter">Clamp-on Ultrasonic Flowmeter</option>
+                <option value="Electromagnetic Flowmeter">Electromagnetic Flowmeter</option>
+                <option value="Mechanical Meter (Woltman)">Mechanical Meter (Woltman)</option>
+                <option value="Pitot Tube">Pitot Tube</option>
+                <option value="Manual / Bak Ukur">Manual / Bak Ukur</option>
+              </select>
             </div>
 
             {/* Previous Inspection Stamp if available */}

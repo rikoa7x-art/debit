@@ -306,6 +306,45 @@ export function analyzePressureStatus(actualPressure, designPressure = 2.4) {
 }
 
 /**
+ * Estimasi debit aliran (Q) berdasarkan rasio tekanan lapangan vs desain
+ * Menggunakan prinsip hidrolika Torricelli / Orifice Pressure-Dependent Demand:
+ * Q_est = Q_des * sqrt(P_act / P_des)
+ */
+export function estimateFlowFromPressure(designFlow, actualPressure, designPressure = 2.4) {
+  if (actualPressure === null || actualPressure === undefined || actualPressure === '' || isNaN(parseFloat(actualPressure))) {
+    return null;
+  }
+  const pAct = Math.max(0, parseFloat(actualPressure));
+  const pDes = Math.max(0.1, parseFloat(designPressure) || 2.4);
+  const qDes = Math.abs(parseFloat(designFlow) || 0);
+
+  if (pAct <= 0.05) return 0;
+  const ratio = Math.sqrt(pAct / pDes);
+  return Number((qDes * ratio).toFixed(2));
+}
+
+/**
+ * Hitung estimasi debit Hazen-Williams berdasarkan elevasi dan tekanan di 2 titik simpul
+ */
+export function calculateHazenWilliamsFlow(lengthM, diameterMm, elevationStartM, elevationEndM, pressureStartBar, pressureEndBar, roughnessC = 130) {
+  if (!lengthM || lengthM <= 0 || !diameterMm || diameterMm <= 0) return null;
+  if (pressureStartBar === null || pressureEndBar === null) return null;
+
+  const h1 = (elevationStartM || 0) + (10.197 * pressureStartBar);
+  const h2 = (elevationEndM || 0) + (10.197 * pressureEndBar);
+  const hf = h1 - h2; // Headloss (meter)
+
+  if (hf <= 0) return 0;
+
+  const S = hf / lengthM; // Kemiringan hidrolis (m/m)
+  const D_m = diameterMm / 1000;
+  
+  // Hazen-Williams SI: Q = 0.2785 * C * D^2.63 * S^0.54 * 1000 (L/s)
+  const qLps = 0.2785 * roughnessC * Math.pow(D_m, 2.63) * Math.pow(S, 0.54) * 1000;
+  return Number(qLps.toFixed(2));
+}
+
+/**
  * Diagnosa Terpadu Hidrolika Rekayasa (Cross-Correlation Debit Q & Tekanan P):
  * Menggabungkan perilaku debit dan tekanan untuk menentukan diagnosa akar masalah di lapangan.
  */
@@ -321,26 +360,80 @@ export function analyzeHydraulicDiagnostics({
   const velocityAnalysis = analyzeVelocityStatus(vActual);
   const pressureAnalysis = analyzePressureStatus(actualPressure, designPressure);
 
+  const hasP = actualPressure !== null && actualPressure !== undefined && actualPressure !== '' && !isNaN(parseFloat(actualPressure));
+  const pAct = hasP ? parseFloat(actualPressure) : null;
+  const pDes = parseFloat(designPressure) || 2.4;
+  const pPct = hasP && pDes > 0 ? ((pAct - pDes) / pDes) * 100 : 0;
+
   if (flowAnalysis.status === 'unmeasured') {
+    if (hasP) {
+      if (pAct < 0.7) {
+        return {
+          code: 'PRESSURE_DROP_CRITICAL',
+          title: 'Kritis: Sisa Tekan Tidak Terpenuhi (< 0.7 bar)',
+          severity: 'critical',
+          badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+          summary: `Tekanan aktual ${pAct.toFixed(2)} bar di bawah batas minimum SNI (0.7 bar / 7 mka). Wilayah di hilir titik ini terancam ketiadaan air bersih! Indikasi kebocoran pipa masif di hulu atau katup pembatas tertutup.`,
+          action: 'Lakukan penelusuran kebocoran di sepanjang segmen hulu atau periksa status katup pasokan.',
+          flowAnalysis,
+          velocityAnalysis,
+          pressureAnalysis,
+          vActual
+        };
+      } else if (pAct > 6.0) {
+        return {
+          code: 'OVERPRESSURE',
+          title: 'Bahaya: Overpressure (> 6.0 bar)',
+          severity: 'critical',
+          badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+          summary: `Tekanan ${pAct.toFixed(2)} bar melampaui batas aman. Risiko tinggi memicu pipa pecah.`,
+          action: 'Pasang atau setel PRV (Pressure Reducing Valve) untuk meredam tekanan.',
+          flowAnalysis,
+          velocityAnalysis,
+          pressureAnalysis,
+          vActual
+        };
+      } else if (pPct < -25) {
+        return {
+          code: 'PRESSURE_DEFICIT',
+          title: 'Peringatan: Defisit Tekanan Lapangan',
+          severity: 'warning',
+          badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          summary: `Tekanan lapangan ${pAct.toFixed(2)} bar turun ${Math.abs(pPct).toFixed(1)}% dari desain rencana (${pDes.toFixed(2)} bar).`,
+          action: 'Lakukan observasi berkala pada jam puncak pemakaian air.',
+          flowAnalysis,
+          velocityAnalysis,
+          pressureAnalysis,
+          vActual
+        };
+      } else {
+        return {
+          code: 'PRESSURE_NORMAL',
+          title: 'Tekanan Lapangan Normal & Stabil',
+          severity: 'normal',
+          badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          summary: `Tekanan aktual ${pAct.toFixed(2)} bar stabil memenuhi rentang kerja pelayanan standar PDAM.`,
+          action: 'Tekanan pipa prima. Pertahankan pemantauan berkala.',
+          flowAnalysis,
+          velocityAnalysis,
+          pressureAnalysis,
+          vActual
+        };
+      }
+    }
+
     return {
       code: 'UNMEASURED',
       title: 'Menunggu Pengukuran Lapangan',
       severity: 'info',
       badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600',
-      summary: 'Masukkan nilai debit aktual flowmeter untuk memulai diagnosa hidrolis.',
+      summary: 'Masukkan nilai tekanan (manometer) atau debit (flowmeter) untuk memulai diagnosa hidrolis.',
       flowAnalysis,
       velocityAnalysis,
       pressureAnalysis,
       vActual
     };
   }
-
-  const hasP = actualPressure !== null && actualPressure !== undefined && actualPressure !== '' && !isNaN(parseFloat(actualPressure));
-  const pAct = hasP ? parseFloat(actualPressure) : null;
-  const pDes = parseFloat(designPressure) || 2.4;
-
-  const qPct = flowAnalysis.percentDeviation;
-  const pPct = hasP && pDes > 0 ? ((pAct - pDes) / pDes) * 100 : 0;
 
   // Skenario 1: Pipa Pecah / Kebocoran Masif di Hilir (Debit Melonjak + Tekanan Drop)
   if (qPct > 15 && hasP && (pPct < -15 || pAct < 0.7)) {

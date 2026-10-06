@@ -218,7 +218,9 @@ export function exportToCSV(pipes, measurements, nodeMap) {
       statusText = 'Peringatan';
     }
 
-    const sourceType = meas.source === 'cascade' ? 'Estimasi Jalur (Hilir)' : 'Pengukuran Lapangan Langsung';
+    const sourceType = meas.source === 'cascade'
+      ? 'Estimasi Jalur (Hilir)'
+      : (meas.isEstimatedFlow ? 'Pengukuran Tekanan Lapangan (Estimasi Hidrolis)' : 'Pengukuran Lapangan Langsung');
     const parentInfo = meas.parentPipeName ? `"${meas.parentPipeName}"` : '';
 
     return [

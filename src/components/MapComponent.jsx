@@ -218,8 +218,26 @@ export default function MapComponent({
       const baseWeight = Math.max(3, Math.min(8, (pipe.diameter / 60)));
       const weight = isSelected ? baseWeight + 4 : baseWeight;
 
+      let pipeColor = analysis.color;
+      let statusLabel = analysis.label;
+
+      // Jika ada data tekanan aktual, utamakan deteksi krisis tekanan (< 0.7 bar)
+      if (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(parseFloat(meas.actualPressure))) {
+        const actP = parseFloat(meas.actualPressure);
+        if (actP < 0.7) {
+          pipeColor = '#ef4444'; // Merah: krisis tekanan / air tidak naik
+          statusLabel = `Kritis: Tekanan Rendah (${actP.toFixed(2)} bar)`;
+        } else if (actP > 6.0) {
+          pipeColor = '#c084fc'; // Ungu: overpressure
+          statusLabel = `Bahaya: Overpressure (${actP.toFixed(2)} bar)`;
+        } else if (analysis.status === 'unmeasured') {
+          pipeColor = '#10b981'; // Hijau: tekanan normal
+          statusLabel = `Tekanan Normal (${actP.toFixed(2)} bar)`;
+        }
+      }
+
       const polyline = L.polyline(pipe.routeCoordinates, {
-        color: isSelected ? '#ffffff' : analysis.color,
+        color: isSelected ? '#ffffff' : pipeColor,
         weight: weight,
         opacity: isSelected ? 1 : (meas ? 0.95 : 0.75),
         lineCap: 'round',
@@ -229,19 +247,19 @@ export default function MapComponent({
 
       // Tooltip
       const designFlow = Math.abs(pipe.flowRate || 0).toFixed(2);
-      const actualFlow = meas ? meas.actualFlow.toFixed(2) + ' L/s' : 'Belum diukur';
+      const actualFlow = meas ? (meas.isEstimatedFlow ? `~${meas.actualFlow.toFixed(2)} L/s (est)` : `${meas.actualFlow.toFixed(2)} L/s`) : 'Belum diukur';
       const tooltipContent = `
         <div style="font-weight: 600; font-size: 12px; margin-bottom: 2px;">
           ${pipeLabel} (${pipe.diameter}mm - ${pipe.material})
         </div>
         <div style="font-size: 11px; color: #94a3b8;">
-          Q Desain: <span style="color:#38bdf8">${designFlow} L/s</span> | Q Aktual: <span style="color:${analysis.color}">${actualFlow}</span>
+          Q Desain: <span style="color:#38bdf8">${designFlow} L/s</span> | Q Aktual: <span style="color:${pipeColor}">${actualFlow}</span>
         </div>
         <div style="font-size: 11px; color: #94a3b8; margin-top: 1px;">
           P Desain: <span style="color:#fbbf24">${designPressure.toFixed(2)} bar</span> | P Aktual: <span style="color:#34d399">${meas?.actualPressure ? meas.actualPressure + ' bar' : '-'}</span>
         </div>
-        <div style="font-size: 10px; margin-top: 2px; color: ${analysis.color}; font-weight: bold;">
-          ● ${analysis.label}
+        <div style="font-size: 10px; margin-top: 2px; color: ${pipeColor}; font-weight: bold;">
+          ● ${statusLabel}
         </div>
       `;
       polyline.bindTooltip(tooltipContent, {
