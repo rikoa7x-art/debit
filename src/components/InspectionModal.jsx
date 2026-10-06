@@ -12,7 +12,8 @@ import {
   Check,
   Zap,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  GitBranch
 } from 'lucide-react';
 import {
   analyzeFlowStatus,
@@ -21,6 +22,7 @@ import {
   analyzePressureStatus,
   analyzeHydraulicDiagnostics,
   estimateFlowFromPressure,
+  calculatePipelineCascade,
   formatDateTime
 } from '../utils/calculations';
 
@@ -117,6 +119,25 @@ export default function InspectionModal({
     console.error('Error analyzing hydraulic diagnostics:', err);
   }
 
+  // Hitung perambatan hidrolis ke pipa hilir (EPANET Cascade / HGL Bernoulli)
+  let cascadeResult = null;
+  let cascadeList = [];
+  try {
+    if (networkData && pipe && (effectiveFlowLps !== null || actualPressureVal !== null)) {
+      cascadeResult = calculatePipelineCascade(
+        networkData,
+        pipe,
+        effectiveFlowLps,
+        actualPressureVal
+      );
+      if (cascadeResult && Array.isArray(cascadeResult.downstreamPipes)) {
+        cascadeList = cascadeResult.downstreamPipes;
+      }
+    }
+  } catch (err) {
+    console.error('Error calculating pipeline cascade:', err);
+  }
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (actualFlowLps === null && actualPressureVal === null) {
@@ -135,7 +156,7 @@ export default function InspectionModal({
       measuredAt: existingMeasurement?.measuredAt || new Date().toISOString()
     };
 
-    onSave(pipe.id, payload);
+    onSave(pipe.id, payload, cascadeList);
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -395,6 +416,28 @@ export default function InspectionModal({
                 <div className="text-right">
                   <div className="font-mono font-bold text-sky-400 text-sm">~{estimatedFlowFromP.toFixed(2)} L/s</div>
                   <div className="text-[9px] font-mono text-slate-400">~{(estimatedFlowFromP * 3.6).toFixed(1)} m³/j</div>
+                </div>
+              </div>
+            )}
+
+            {/* Keterkaitan Jaringan Hulu-Hilir (EPANET Cascade HGL) */}
+            {cascadeList.length > 0 && (
+              <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-3 text-xs text-indigo-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30">
+                    <GitBranch className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-white">Keterkaitan Jaringan (EPANET HGL):</div>
+                    <div className="text-[10px] text-indigo-300">
+                      Tekanan ini otomatis merambat ke pipa-pipa hilir
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-indigo-300 px-2 py-1 rounded-lg bg-indigo-900/60 border border-indigo-500/40 text-[11px]">
+                    +{cascadeList.length} pipa hilir
+                  </span>
                 </div>
               </div>
             )}
