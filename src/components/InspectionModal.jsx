@@ -10,7 +10,9 @@ import {
   Info,
   Calendar,
   Check,
-  Zap
+  Zap,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import {
   analyzeFlowStatus,
@@ -24,6 +26,7 @@ import {
 
 export default function InspectionModal({
   pipe,
+  networkData,
   existingMeasurement,
   onSave,
   onDelete,
@@ -35,26 +38,39 @@ export default function InspectionModal({
   const designPressure = pipe._designPressure || 2.4;
   const designVelocity = pipe.velocity || 0;
 
-  // Unit toggle: 'lps' (L/s) or 'm3h' (m³/h)
-  const [unit, setUnit] = useState('lps');
+  // Node Elevations from networkData
+  const startNode = networkData?.nodes?.find(n => n.id === pipe.startNodeId);
+  const endNode = networkData?.nodes?.find(n => n.id === pipe.endNodeId);
+  const zStart = startNode?.elevation !== undefined ? startNode.elevation : null;
+  const zEnd = endNode?.elevation !== undefined ? endNode.elevation : null;
+  const deltaZ = (zStart !== null && zEnd !== null) ? Number((zStart - zEnd).toFixed(1)) : null;
+
+  // Unit toggle for pressure and flow
+  const [pressureUnit, setPressureUnit] = useState('bar'); // 'bar', 'kgcm2', 'psi', 'mka'
+  const [unit, setUnit] = useState('lps'); // 'lps' or 'm3h'
   const [flowInput, setFlowInput] = useState('');
   const [pressureInput, setPressureInput] = useState('');
-  const [method, setMethod] = useState('Clamp-on Ultrasonic Flowmeter');
+  const [method, setMethod] = useState('Manometer Analog (Bourdon Tube)');
+  const [showOptionalFlow, setShowOptionalFlow] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Populate form if existing measurement
   useEffect(() => {
     if (existingMeasurement) {
-      setFlowInput(existingMeasurement.actualFlow !== undefined ? existingMeasurement.actualFlow.toString() : '');
+      setFlowInput(existingMeasurement.actualFlow !== undefined && !existingMeasurement.isEstimatedFlow && existingMeasurement.actualFlow !== null ? existingMeasurement.actualFlow.toString() : '');
       setPressureInput(existingMeasurement.actualPressure !== undefined && existingMeasurement.actualPressure !== null ? existingMeasurement.actualPressure.toString() : '');
       if (existingMeasurement.method) setMethod(existingMeasurement.method);
+      if (existingMeasurement.actualFlow && !existingMeasurement.isEstimatedFlow) {
+        setShowOptionalFlow(true);
+      }
     } else {
       setFlowInput('');
       setPressureInput('');
+      setShowOptionalFlow(false);
     }
   }, [pipe, existingMeasurement]);
 
-  // Convert current input to L/s for comparison
+  // Convert current flow input to L/s for comparison
   const numericInput = parseFloat(flowInput);
   const actualFlowLps = isNaN(numericInput)
     ? null
@@ -62,9 +78,15 @@ export default function InspectionModal({
     ? numericInput / 3.6 // 1 L/s = 3.6 m3/h
     : numericInput;
 
-  const actualPressureVal = pressureInput !== '' && !isNaN(parseFloat(pressureInput))
-    ? parseFloat(pressureInput)
-    : null;
+  // Convert pressure input to bar based on selected unit
+  const rawP = parseFloat(pressureInput);
+  let actualPressureVal = null;
+  if (pressureInput !== '' && !isNaN(rawP)) {
+    if (pressureUnit === 'psi') actualPressureVal = rawP * 0.0689476;
+    else if (pressureUnit === 'kgcm2') actualPressureVal = rawP * 0.980665;
+    else if (pressureUnit === 'mka') actualPressureVal = rawP * 0.0980665;
+    else actualPressureVal = rawP;
+  }
 
   // Jika debit tidak diukur langsung tapi ada tekanan, estimasikan debitnya via hukum hidrolika
   const estimatedFlowFromP = (actualFlowLps === null && actualPressureVal !== null)
@@ -147,7 +169,10 @@ export default function InspectionModal({
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-mono">
-                ID: {pipe.id.slice(0, 8)}... | {pipe.material} | P: {pipe.length} m
+                {pipe.material} | P: {pipe.length} m
+                {zStart !== null && zEnd !== null && (
+                  <span className="text-amber-300"> | Elevasi: {zStart}m → {zEnd}m (Δz: {deltaZ > 0 ? '+' : ''}{deltaZ}m)</span>
+                )}
               </p>
             </div>
           </div>
@@ -298,37 +323,60 @@ export default function InspectionModal({
 
           {/* Form Input Lapangan - Simpel & Praktis */}
           <form id="inspectionForm" onSubmit={handleSubmit} className="space-y-3.5">
-            {/* Mode Notifikasi Fleksibel */}
-            <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-[11px] text-slate-300 flex items-center gap-1.5">
-              <Info className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span>Cukup isi <strong>Tekanan (P)</strong> manometer, atau <strong>Debit (Q)</strong> flowmeter, atau keduanya.</span>
+            {/* Mode Notifikasi Utama Manometer */}
+            <div className="bg-sky-950/40 p-2.5 rounded-xl border border-sky-600/30 text-[11px] text-sky-200 flex items-center gap-2">
+              <Info className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>Cukup masukkan angka pada <strong>jarum manometer</strong>. Sistem otomatis menghitung debit & analisa kebocoran.</span>
             </div>
 
-            {/* Input Tekanan Air Lapangan (Manometer) */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                  <Gauge className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Tekanan Air Lapangan (Manometer)</span>
+            {/* Input Tekanan Air Lapangan (Manometer) - Utama */}
+            <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-amber-500/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Gauge className="w-4 h-4 text-amber-400" />
+                  <span>Tekanan Manometer Lapangan</span>
                 </label>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  Desain: {designPressure.toFixed(1)} bar
-                </span>
+                {/* Unit Switcher Manometer */}
+                <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700 text-[10px]">
+                  {['bar', 'kgcm2', 'psi', 'mka'].map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      onClick={() => setPressureUnit(u)}
+                      className={`px-1.5 py-0.5 rounded font-medium transition ${
+                        pressureUnit === u ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {u === 'kgcm2' ? 'kg/cm²' : u}
+                    </button>
+                  ))}
+                </div>
               </div>
+
               <div className="relative">
                 <input
                   type="number"
                   step="0.05"
-                  placeholder={`Contoh: ${designPressure.toFixed(1)}`}
+                  placeholder={`Desain: ${designPressure.toFixed(1)} bar`}
                   value={pressureInput}
                   onChange={(e) => setPressureInput(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl px-4 py-2.5 text-base font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
                 />
-                <span className="absolute right-4 top-3 text-xs text-amber-400 font-mono font-semibold">bar</span>
+                <span className="absolute right-4 top-3 text-xs text-amber-400 font-mono font-semibold">
+                  {pressureUnit === 'kgcm2' ? 'kg/cm²' : pressureUnit}
+                </span>
               </div>
+
+              {/* Conversion text jika bukan bar */}
+              {pressureUnit !== 'bar' && actualPressureVal !== null && (
+                <div className="text-[10px] text-amber-300 font-mono">
+                  ≈ {actualPressureVal.toFixed(2)} bar (dikonversi otomatis untuk kalkulasi)
+                </div>
+              )}
+
               {actualPressureVal !== null && actualPressureVal < 0.7 && (
-                <div className="text-[10px] text-rose-400 mt-1 font-semibold flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3 text-rose-400" />
+                <div className="text-[10px] text-rose-400 font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                   Sisa tekan di bawah 0.7 bar (air tidak mampu naik ke kran warga!)
                 </div>
               )}
@@ -336,62 +384,82 @@ export default function InspectionModal({
 
             {/* Estimasi Debit Otomatis jika hanya isi Tekanan */}
             {estimatedFlowFromP !== null && (
-              <div className="bg-sky-950/40 border border-sky-500/30 rounded-xl p-2.5 text-xs text-sky-200 flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Estimasi Debit dari Tekanan:</span>
-                </span>
-                <span className="font-mono font-bold text-sky-400">~{estimatedFlowFromP.toFixed(2)} L/s</span>
+              <div className="bg-sky-950/40 border border-sky-500/30 rounded-xl p-3 text-xs text-sky-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-sky-400 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-white">Estimasi Debit Otomatis:</div>
+                    <div className="text-[10px] text-sky-300">Dihitung dari tekanan pipa & elevasi</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-mono font-bold text-sky-400 text-sm">~{estimatedFlowFromP.toFixed(2)} L/s</div>
+                  <div className="text-[9px] font-mono text-slate-400">~{(estimatedFlowFromP * 3.6).toFixed(1)} m³/j</div>
+                </div>
               </div>
             )}
 
-            {/* Input Debit Lapangan (Opsional) */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
+            {/* Tombol Buka Flowmeter (Opsional) */}
+            <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+              <button
+                type="button"
+                onClick={() => setShowOptionalFlow(!showOptionalFlow)}
+                className="w-full p-2.5 text-xs text-slate-400 hover:text-slate-200 flex items-center justify-between transition"
+              >
+                <span className="flex items-center gap-1.5 font-medium">
                   <Droplets className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Debit Aktual (Bila Ada Flowmeter)</span>
-                  <span className="text-[10px] text-slate-500 font-normal">(Opsional)</span>
-                </label>
-                {/* Unit Switcher */}
-                <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setUnit('lps')}
-                    className={`px-2 py-0.5 rounded-md font-medium transition ${
-                      unit === 'lps' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
-                    }`}
-                  >
-                    L/s
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUnit('m3h')}
-                    className={`px-2 py-0.5 rounded-md font-medium transition ${
-                      unit === 'm3h' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
-                    }`}
-                  >
-                    m³/j
-                  </button>
-                </div>
-              </div>
-
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.01"
-                  placeholder={`Desain: ${designFlow.toFixed(2)}`}
-                  value={flowInput}
-                  onChange={(e) => setFlowInput(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-4 py-2.5 text-base font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
-                />
-                <span className="absolute right-4 top-3 text-xs text-slate-400 font-mono">
-                  {unit === 'lps' ? 'L/detik' : 'm³/jam'}
+                  <span>Input Flowmeter Langsung (Opsional / Bila Membawa Alat)</span>
                 </span>
-              </div>
-              {unit === 'm3h' && numericInput && !isNaN(numericInput) && (
-                <div className="text-[10px] text-sky-400 mt-1 font-mono">
-                  ≈ {(numericInput / 3.6).toFixed(2)} L/detik (dikonversi otomatis)
+                {showOptionalFlow ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+
+              {showOptionalFlow && (
+                <div className="p-3 border-t border-slate-800 space-y-2 bg-slate-950/80">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-slate-300">
+                      Debit Terukur di Flowmeter
+                    </label>
+                    {/* Unit Switcher */}
+                    <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setUnit('lps')}
+                        className={`px-2 py-0.5 rounded font-medium transition ${
+                          unit === 'lps' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
+                        }`}
+                      >
+                        L/s
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUnit('m3h')}
+                        className={`px-2 py-0.5 rounded font-medium transition ${
+                          unit === 'm3h' ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400'
+                        }`}
+                      >
+                        m³/j
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder={`Desain: ${designFlow.toFixed(2)}`}
+                      value={flowInput}
+                      onChange={(e) => setFlowInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2 text-sm font-bold font-mono text-white placeholder-slate-600 focus:outline-none transition shadow-inner"
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-mono">
+                      {unit === 'lps' ? 'L/s' : 'm³/j'}
+                    </span>
+                  </div>
+                  {unit === 'm3h' && numericInput && !isNaN(numericInput) && (
+                    <div className="text-[10px] text-sky-400 font-mono">
+                      ≈ {(numericInput / 3.6).toFixed(2)} L/detik (dikonversi otomatis)
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -399,21 +467,19 @@ export default function InspectionModal({
             {/* Metode Pengukuran */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Metode / Alat Ukur
+                Alat Pengukuran Lapangan
               </label>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 focus:border-sky-500 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
               >
-                <option value="Manometer Analog (Bourdon Tube)">Manometer Analog (Bourdon Tube)</option>
-                <option value="Digital Pressure Gauge">Digital Pressure Gauge</option>
+                <option value="Manometer Analog (Bourdon Tube)">Manometer Analog (Bourdon Tube / Jarum)</option>
+                <option value="Digital Pressure Gauge">Digital Pressure Gauge (Manometer Digital)</option>
                 <option value="Manometer di Hidran / Kran Warga">Manometer di Hidran / Kran Warga</option>
-                <option value="Clamp-on Ultrasonic Flowmeter">Clamp-on Ultrasonic Flowmeter</option>
+                <option value="Manometer di Air Valve / Washout">Manometer di Air Valve / Washout</option>
+                <option value="Clamp-on Ultrasonic Flowmeter">Clamp-on Ultrasonic Flowmeter (Debit)</option>
                 <option value="Electromagnetic Flowmeter">Electromagnetic Flowmeter</option>
-                <option value="Mechanical Meter (Woltman)">Mechanical Meter (Woltman)</option>
-                <option value="Pitot Tube">Pitot Tube</option>
-                <option value="Manual / Bak Ukur">Manual / Bak Ukur</option>
               </select>
             </div>
 
