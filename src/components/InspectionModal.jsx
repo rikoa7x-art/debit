@@ -229,8 +229,8 @@ export default function InspectionModal({
               </div>
             </div>
 
-            {/* Diagnosa Terpadu Hidrolika Rekayasa saat ada input debit */}
-            {actualFlowLps !== null && !isNaN(actualFlowLps) && (
+            {/* Diagnosa Terpadu Hidrolika Rekayasa saat ada input debit atau tekanan */}
+            {(effectiveFlowLps !== null || actualPressureVal !== null) && diagnostics && diagnostics.code !== 'UNMEASURED' && (
               <div
                 className={`p-3.5 rounded-xl border flex flex-col gap-2 transition-all ${
                   diagnostics.severity === 'critical'
@@ -247,10 +247,18 @@ export default function InspectionModal({
                     {diagnostics.severity === 'normal' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
                     <span>{diagnostics.title}</span>
                   </div>
-                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-black/40 shrink-0">
-                    ΔQ {diagnostics.flowAnalysis.percentDeviation >= 0 ? '+' : ''}
-                    {diagnostics.flowAnalysis.percentDeviation.toFixed(1)}%
-                  </span>
+                  {diagnostics.flowAnalysis && typeof diagnostics.flowAnalysis.percentDeviation === 'number' && diagnostics.flowAnalysis.status !== 'unmeasured' ? (
+                    <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-black/40 shrink-0">
+                      ΔQ {diagnostics.flowAnalysis.percentDeviation >= 0 ? '+' : ''}
+                      {diagnostics.flowAnalysis.percentDeviation.toFixed(1)}%
+                    </span>
+                  ) : (
+                    actualPressureVal !== null && (
+                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-black/40 shrink-0 text-amber-300">
+                        {actualPressureVal.toFixed(2)} bar
+                      </span>
+                    )
+                  )}
                 </div>
 
                 <p className="text-[11px] opacity-90 leading-relaxed">

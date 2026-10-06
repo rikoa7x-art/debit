@@ -46,8 +46,8 @@ export function calculateIWAWaterBalance(networkData, measurements) {
   
   reservoirPipes.forEach(p => {
     const meas = measurements[p.id];
-    if (meas && meas.actualFlow !== undefined) {
-      totalMeasuredSiv += meas.actualFlow;
+    if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
+      totalMeasuredSiv += Number(meas.actualFlow);
       hasMeasuredReservoirOutlet = true;
     }
     totalDesignSiv += (p.flowRate || 0);
@@ -221,8 +221,8 @@ export function calculateDMABalance(networkData, measurements, dmaResult) {
         totalDesignFlowLps += (pipe.flowRate || 0);
       }
       const meas = measurements[pid];
-      if (meas && meas.actualFlow !== undefined) {
-        totalActualFlowLps += meas.actualFlow;
+      if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
+        totalActualFlowLps += Number(meas.actualFlow);
         measuredCount++;
       }
     });
@@ -234,7 +234,7 @@ export function calculateDMABalance(networkData, measurements, dmaResult) {
     let measuredDesignFlow = 0;
     zone.pipeIds.forEach(pid => {
       const meas = measurements[pid];
-      if (meas && meas.actualFlow !== undefined) {
+      if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
         const pipe = pipesMap.get(pid);
         if (pipe) measuredDesignFlow += (pipe.flowRate || 0);
       }
@@ -277,7 +277,7 @@ export function calculateDMABalance(networkData, measurements, dmaResult) {
  */
 export function calculateLeakRiskScore(pipe, measurement, nodeMap) {
   let flowDeviationScore = 30; 
-  if (measurement && measurement.actualFlow !== undefined) {
+  if (measurement && measurement.actualFlow !== undefined && measurement.actualFlow !== null && !isNaN(Number(measurement.actualFlow))) {
     const flowStatus = analyzeFlowStatus(pipe.flowRate || 0, measurement.actualFlow);
     flowDeviationScore = Math.min(100, Math.abs(flowStatus.percentDeviation) * 2);
   }
@@ -291,10 +291,11 @@ export function calculateLeakRiskScore(pipe, measurement, nodeMap) {
   else if (mat.includes('ac') || mat.includes('asbestos')) materialRiskScore = 80;
 
   let pressureStressScore = 20;
-  if (measurement && measurement.actualPressure !== undefined) {
-    if (measurement.actualPressure > 6) pressureStressScore = 100;
-    else if (measurement.actualPressure > 4) pressureStressScore = 70;
-    else if (measurement.actualPressure < 0.7) pressureStressScore = 60;
+  if (measurement && measurement.actualPressure !== undefined && measurement.actualPressure !== null && !isNaN(Number(measurement.actualPressure))) {
+    const p = Number(measurement.actualPressure);
+    if (p > 6) pressureStressScore = 100;
+    else if (p > 4) pressureStressScore = 70;
+    else if (p < 0.7) pressureStressScore = 60;
   }
 
   let velocityStressScore = 10;

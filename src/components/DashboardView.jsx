@@ -82,23 +82,31 @@ export default function DashboardView({
       }
 
       const meas = measurements[pipe.id];
-      if (meas && meas.actualFlow !== undefined) {
-        measuredCount++;
+      if (meas) {
+        const hasQ = meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow));
+        const hasP = meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure));
+
+        if (hasQ || hasP) {
+          measuredCount++;
+        }
+
         const designFlow = Math.abs(pipe.flowRate || 0);
-        const actualFlow = Number(meas.actualFlow);
+        const actualFlow = hasQ ? Number(meas.actualFlow) : null;
 
-        totalDesignFlowMeasured += designFlow;
-        totalActualFlowMeasured += actualFlow;
+        if (hasQ) {
+          totalDesignFlowMeasured += designFlow;
+          totalActualFlowMeasured += actualFlow;
 
-        // Velocity analysis
-        const vActual = calculateVelocity(actualFlow, pipe.diameter);
-        const vStatus = analyzeVelocityStatus(vActual);
-        if (vStatus.status === 'optimal') optimalVelocityCount++;
-        else if (vStatus.status === 'sediment_risk') sedimentRiskCount++;
-        else if (vStatus.status === 'hammer_risk') hammerRiskCount++;
+          // Velocity analysis
+          const vActual = calculateVelocity(actualFlow, pipe.diameter);
+          const vStatus = analyzeVelocityStatus(vActual);
+          if (vStatus.status === 'optimal') optimalVelocityCount++;
+          else if (vStatus.status === 'sediment_risk') sedimentRiskCount++;
+          else if (vStatus.status === 'hammer_risk') hammerRiskCount++;
+        }
 
         // Pressure analysis
-        if (meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(meas.actualPressure)) {
+        if (hasP) {
           const actP = Number(meas.actualPressure);
           totalDesignPressureMeasured += designPressure;
           totalActualPressureMeasured += actP;
@@ -132,10 +140,25 @@ export default function DashboardView({
             },
             analysis,
             diagnostics,
-            vActual,
+            vActual: hasQ ? calculateVelocity(actualFlow, pipe.diameter) : null,
             meas
           });
-        } else if (analysis.status === 'overflow_alert') overflowCount++;
+        } else if (analysis.status === 'overflow_alert') {
+          overflowCount++;
+        } else if (hasP && Number(meas.actualPressure) < 0.7) {
+          criticalLeaks.push({
+            pipe: {
+              ...pipe,
+              _fromLabel: fromNode?.label,
+              _toLabel: toNode?.label,
+              _designPressure: designPressure
+            },
+            analysis,
+            diagnostics,
+            vActual: hasQ ? calculateVelocity(actualFlow, pipe.diameter) : null,
+            meas
+          });
+        }
       }
     });
 
@@ -457,8 +480,12 @@ export default function DashboardView({
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                       Model: {Math.abs(pipe.flowRate || 0).toFixed(1)} L/s ➔ Aktual:{' '}
-                      <strong className="text-rose-400">{Number(meas.actualFlow).toFixed(1)} L/s</strong> (
-                      {analysis.percentDeviation.toFixed(1)}%)
+                      <strong className="text-rose-400">
+                        {meas.actualFlow !== null && meas.actualFlow !== undefined
+                          ? `${Number(meas.actualFlow).toFixed(1)} L/s`
+                          : (meas.actualPressure !== null ? `P: ${Number(meas.actualPressure).toFixed(1)} bar` : '-')}
+                      </strong>{' '}
+                      {analysis && typeof analysis.percentDeviation === 'number' && analysis.status !== 'unmeasured' ? `(${analysis.percentDeviation.toFixed(1)}%)` : ''}
                     </div>
                   </div>
                   <button className="text-xs text-sky-400 font-semibold p-1 hover:text-sky-300 shrink-0">

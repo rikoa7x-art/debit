@@ -247,7 +247,15 @@ export default function MapComponent({
 
       // Tooltip
       const designFlow = Math.abs(pipe.flowRate || 0).toFixed(2);
-      const actualFlow = meas ? (meas.isEstimatedFlow ? `~${meas.actualFlow.toFixed(2)} L/s (est)` : `${meas.actualFlow.toFixed(2)} L/s`) : 'Belum diukur';
+      const hasActualQ = meas && meas.actualFlow !== null && meas.actualFlow !== undefined && !isNaN(Number(meas.actualFlow));
+      const actualFlow = hasActualQ
+        ? (meas.isEstimatedFlow ? `~${Number(meas.actualFlow).toFixed(2)} L/s (est)` : `${Number(meas.actualFlow).toFixed(2)} L/s`)
+        : (meas && meas.actualPressure !== null && meas.actualPressure !== undefined ? `P: ${Number(meas.actualPressure).toFixed(2)} bar` : 'Belum diukur');
+      
+      const pAktualStr = (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure)))
+        ? `${Number(meas.actualPressure).toFixed(2)} bar`
+        : '-';
+
       const tooltipContent = `
         <div style="font-weight: 600; font-size: 12px; margin-bottom: 2px;">
           ${pipeLabel} (${pipe.diameter}mm - ${pipe.material})
@@ -256,7 +264,7 @@ export default function MapComponent({
           Q Desain: <span style="color:#38bdf8">${designFlow} L/s</span> | Q Aktual: <span style="color:${pipeColor}">${actualFlow}</span>
         </div>
         <div style="font-size: 11px; color: #94a3b8; margin-top: 1px;">
-          P Desain: <span style="color:#fbbf24">${designPressure.toFixed(2)} bar</span> | P Aktual: <span style="color:#34d399">${meas?.actualPressure ? meas.actualPressure + ' bar' : '-'}</span>
+          P Desain: <span style="color:#fbbf24">${designPressure.toFixed(2)} bar</span> | P Aktual: <span style="color:#34d399">${pAktualStr}</span>
         </div>
         <div style="font-size: 10px; margin-top: 2px; color: ${pipeColor}; font-weight: bold;">
           ● ${statusLabel}
@@ -285,8 +293,12 @@ export default function MapComponent({
 
       const designQStr = Math.abs(pipe.flowRate || 0).toFixed(1);
       const designPStr = designPressure.toFixed(1);
-      const actualQStr = meas?.actualFlow !== undefined ? Number(meas.actualFlow).toFixed(1) : null;
-      const actualPStr = meas?.actualPressure !== undefined && meas.actualPressure !== null ? Number(meas.actualPressure).toFixed(1) : null;
+      const actualQStr = (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow)))
+        ? Number(meas.actualFlow).toFixed(1)
+        : null;
+      const actualPStr = (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure)))
+        ? Number(meas.actualPressure).toFixed(1)
+        : null;
 
       let statusBadgeClass = '';
       if (meas) {

@@ -265,7 +265,7 @@ export default function PipeListView({
                       <span className="flex items-center gap-1 text-sky-400">
                         <Droplets className="w-3 h-3 fill-sky-400/20" /> Debit (Q)
                       </span>
-                      {hasMeas && (
+                      {hasMeas && pipe._analysis && typeof pipe._analysis.percentDeviation === 'number' && (
                         <span className="text-[9px] font-mono font-bold" style={{ color: pipe._analysis.color }}>
                           {pipe._analysis.percentDeviation >= 0 ? '+' : ''}
                           {pipe._analysis.percentDeviation.toFixed(1)}%
@@ -279,7 +279,11 @@ export default function PipeListView({
                     <div className="flex items-baseline justify-between text-xs font-mono">
                       <span className="text-slate-500 text-[10px]">Aktual:</span>
                       <span className="font-bold" style={{ color: pipe._analysis.color }}>
-                        {hasMeas ? `${pipe._measurement.actualFlow.toFixed(2)} L/s` : 'Belum diukur'}
+                        {pipe._measurement && pipe._measurement.actualFlow !== null && pipe._measurement.actualFlow !== undefined && !isNaN(Number(pipe._measurement.actualFlow))
+                          ? `${Number(pipe._measurement.actualFlow).toFixed(2)} L/s`
+                          : (pipe._measurement && pipe._measurement.actualPressure !== null && pipe._measurement.actualPressure !== undefined
+                              ? 'Hanya Tekanan'
+                              : 'Belum diukur')}
                       </span>
                     </div>
                   </div>
