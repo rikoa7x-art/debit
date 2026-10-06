@@ -1,5 +1,5 @@
 // ─── Versi cache: naikkan angka ini setiap kali deploy ulang ───
-const CACHE_NAME = 'subang-pipe-monitoring-v8';
+const CACHE_NAME = 'subang-pipe-monitoring-v9';
 
 // Deteksi base path secara otomatis (misal '/debit/' di GitHub Pages atau '/' di localhost)
 const BASE = self.location.pathname.replace(/sw\.js$/, '');
@@ -48,24 +48,31 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// ─── Message: tangani perintah skipWaiting dari aplikasi ───────
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // ─── Fetch: strategi caching ──────────────────────────────────
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
 
-  // 1. Aset JS/CSS Vite (hash → immutable) → Cache-First
+  // 1. Aset JS/CSS Vite -> Network-First (agar update langsung terpasang) dengan fallback cache untuk offline
   if (url.pathname.startsWith('/assets/') || url.pathname.match(/\.(js|css|woff2?)$/)) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) return cached;
-        return fetch(event.request).then((response) => {
+      fetch(event.request)
+        .then((response) => {
           if (response && response.status === 200) {
-            caches.open(CACHE_NAME).then((c) => c.put(event.request, response.clone()));
+            const respClone = response.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(event.request, respClone));
           }
           return response;
-        }).catch(() => caches.match(event.request));
-      })
+        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }

@@ -82,13 +82,18 @@ export default function InspectionModal({
     ? pipe.headloss * Math.pow(effectiveFlowLps / designFlow, 1.852)
     : null;
 
-  const diagnostics = analyzeHydraulicDiagnostics({
-    designFlow,
-    actualFlow: effectiveFlowLps,
-    designPressure,
-    actualPressure: actualPressureVal,
-    diameter: pipe.diameter
-  });
+  let diagnostics = null;
+  try {
+    diagnostics = analyzeHydraulicDiagnostics({
+      designFlow,
+      actualFlow: effectiveFlowLps,
+      designPressure,
+      actualPressure: actualPressureVal,
+      diameter: pipe.diameter
+    });
+  } catch (err) {
+    console.error('Error analyzing hydraulic diagnostics:', err);
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault();

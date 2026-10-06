@@ -364,6 +364,9 @@ export function analyzeHydraulicDiagnostics({
   const pAct = hasP ? parseFloat(actualPressure) : null;
   const pDes = parseFloat(designPressure) || 2.4;
   const pPct = hasP && pDes > 0 ? ((pAct - pDes) / pDes) * 100 : 0;
+  const qPct = (flowAnalysis && typeof flowAnalysis.percentDeviation === 'number')
+    ? flowAnalysis.percentDeviation
+    : 0;
 
   if (flowAnalysis.status === 'unmeasured') {
     if (hasP) {

@@ -20,25 +20,48 @@
     
     
     
-    <script type="module" crossorigin src="./assets/app-v8.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-v8.css">
+    
+    <script type="module" crossorigin src="./assets/app-v9.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-v9.css">
   </head>
   <body class="bg-slate-950 text-slate-100 select-none antialiased min-h-screen overflow-x-hidden">
     <div id="root"></div>
     <script>
-      // Force update Service Worker to clear old cache v1-v7
+      // Service Worker Auto-Update & Cache Buster
       if ('serviceWorker' in navigator) {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!refreshing) {
+            refreshing = true;
+            window.location.reload();
+          }
+        });
+
         navigator.serviceWorker.getRegistrations().then(registrations => {
           for (const reg of registrations) {
             reg.update();
+            if (reg.waiting) {
+              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
           }
         });
+
         window.addEventListener('load', () => {
           const swPath = window.location.pathname.endsWith('/')
             ? window.location.pathname + 'sw.js'
             : window.location.pathname.replace(/\/[^\/]*$/, '/sw.js');
           navigator.serviceWorker.register(swPath).then(reg => {
             reg.update();
+            reg.addEventListener('updatefound', () => {
+              const newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                  }
+                });
+              }
+            });
           }).catch(err => {
             console.log('SW registration note:', err);
           });

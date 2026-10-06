@@ -145,6 +145,9 @@ export default function App() {
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30">
                 ADB
               </span>
+              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                v9.0
+              </span>
             </div>
             <p className="text-[10px] text-slate-400 leading-none mt-0.5">
               Monitoring Jalur Transmisi & Distribusi
