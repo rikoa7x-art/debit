@@ -4,7 +4,10 @@ import path from 'path';
 
 console.log('--- Step 1: Prepare index.html with /src/main.jsx for Vite build ---');
 let html = fs.readFileSync('index.html', 'utf8');
-// Ensure it points to source
+// Ensure it points to source and standard public icons
+html = html.replace(/<link rel="icon"[^>]*>/, '<link rel="icon" type="image/svg+xml" href="/icon.svg" />');
+html = html.replace(/<link rel="apple-touch-icon"[^>]*>/, '<link rel="apple-touch-icon" href="/icon-192.png" />');
+html = html.replace(/<link rel="manifest"[^>]*>/, '<link rel="manifest" href="/manifest.json" />');
 html = html.replace(/<link rel="stylesheet"[^>]*assets\/[^>]*>/g, '');
 html = html.replace(/<script type="module"[^>]*assets\/[^>]*><\/script>/g, '<script type="module" src="/src/main.jsx"></script>');
 if (!html.includes('/src/main.jsx')) {
@@ -45,7 +48,9 @@ fs.copyFileSync('public/sw.js', 'docs/sw.js');
 const distHtml = fs.readFileSync('dist/index.html', 'utf8');
 const staticHtml = distHtml
   .replace(/href="\/debit\/assets\//g, 'href="./assets/')
-  .replace(/src="\/debit\/assets\//g, 'src="./assets/');
+  .replace(/src="\/debit\/assets\//g, 'src="./assets/')
+  .replace(/href="\/debit\//g, 'href="./')
+  .replace(/src="\/debit\//g, 'src="./');
 
 fs.writeFileSync('index.html', staticHtml);
 fs.writeFileSync('docs/index.html', staticHtml);

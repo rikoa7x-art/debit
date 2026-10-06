@@ -13,12 +13,45 @@ export function getStoredMeasurements() {
   }
 }
 
-export function saveMeasurement(pipeId, data) {
+export function saveMeasurement(pipeId, data, cascadeList = []) {
   const all = getStoredMeasurements();
+
+  // Bersihkan cascade lama yang bersumber dari pipa ini sebelumnya
+  Object.keys(all).forEach(key => {
+    if (all[key]?.source === 'cascade' && all[key]?.parentPipeId === pipeId) {
+      delete all[key];
+    }
+  });
+
+  // Simpan pengukuran utama
   all[pipeId] = {
     ...data,
+    source: 'measured',
     updatedAt: new Date().toISOString()
   };
+
+  // Simpan perambatan hidrolis ke pipa hilir di jalur yang sama
+  if (Array.isArray(cascadeList) && cascadeList.length > 0) {
+    cascadeList.forEach(c => {
+      // Jangan timpa jika pipa tersebut sudah memiliki pengukuran lapangan langsung
+      if (all[c.pipeId]?.source === 'measured') return;
+
+      all[c.pipeId] = {
+        actualFlow: c.actualFlow,
+        actualPressure: c.actualPressure,
+        actualVelocity: c.actualVelocity,
+        actualHeadloss: c.actualHeadloss,
+        source: 'cascade',
+        parentPipeId: pipeId,
+        parentPipeName: c.parentPipeName || `${pipeId.slice(0, 6)}`,
+        sequence: c.sequence,
+        method: 'Estimasi Hidrolis Jalur (EPANET HGL)',
+        measuredAt: data.measuredAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   return all;
 }
@@ -26,6 +59,14 @@ export function saveMeasurement(pipeId, data) {
 export function deleteMeasurement(pipeId) {
   const all = getStoredMeasurements();
   delete all[pipeId];
+
+  // Bersihkan juga seluruh estimasi cascade turunan dari pipa ini
+  Object.keys(all).forEach(key => {
+    if (all[key]?.source === 'cascade' && all[key]?.parentPipeId === pipeId) {
+      delete all[key];
+    }
+  });
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   return all;
 }
@@ -101,6 +142,7 @@ export function generateDemoData(pipes, nodeMap) {
       surveyor,
       physicalCondition,
       notes,
+      source: 'measured',
       measuredAt: inspectDate,
       updatedAt: inspectDate
     };
@@ -127,10 +169,10 @@ export function exportToCSV(pipes, measurements, nodeMap) {
     'Tekanan Desain (bar)',
     'Tekanan Aktual (bar)',
     'Status',
-    'Kondisi Fisik',
-    'Petugas',
+    'Sumber Data',
+    'Pipa Induk Jalur',
     'Waktu Pengukuran',
-    'Catatan'
+    'Metode'
   ];
 
   const rows = pipes.map(p => {
@@ -159,7 +201,7 @@ export function exportToCSV(pipes, measurements, nodeMap) {
         designPressure.toFixed(2),
         '',
         'Belum Diukur',
-        '',
+        'Belum Ada Data',
         '',
         '',
         ''
@@ -176,6 +218,9 @@ export function exportToCSV(pipes, measurements, nodeMap) {
       statusText = 'Peringatan';
     }
 
+    const sourceType = meas.source === 'cascade' ? 'Estimasi Jalur (Hilir)' : 'Pengukuran Lapangan Langsung';
+    const parentInfo = meas.parentPipeName ? `"${meas.parentPipeName}"` : '';
+
     return [
       p.id,
       `"${fromLabel} -> ${toLabel}"`,
@@ -189,10 +234,10 @@ export function exportToCSV(pipes, measurements, nodeMap) {
       designPressure.toFixed(2),
       meas.actualPressure !== undefined && meas.actualPressure !== null ? meas.actualPressure : '',
       statusText,
-      `"${meas.physicalCondition || ''}"`,
-      `"${meas.surveyor || ''}"`,
+      `"${sourceType}"`,
+      parentInfo,
       `"${meas.measuredAt || ''}"`,
-      `"${(meas.notes || '').replace(/"/g, '""')}"`
+      `"${meas.method || ''}"`
     ];
   });
 

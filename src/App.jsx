@@ -9,7 +9,8 @@ import {
   Droplets,
   Layers,
   Sparkles,
-  Download
+  Download,
+  SearchX
 } from 'lucide-react';
 
 import MapComponent from './components/MapComponent';
@@ -17,6 +18,7 @@ import PipeListView from './components/PipeListView';
 import DashboardView from './components/DashboardView';
 import InspectionModal from './components/InspectionModal';
 import QrCodeModal from './components/QrCodeModal';
+import WaterLossView from './components/WaterLossView';
 
 import subangData from './Subang_Jalur_ADB.json';
 import {
@@ -29,7 +31,7 @@ import {
 } from './utils/storage';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('map'); // 'map', 'list', 'dashboard'
+  const [activeTab, setActiveTab] = useState('map'); // 'map', 'list', 'dashboard', 'nrw'
   const [networkData, setNetworkData] = useState(subangData);
   const [measurements, setMeasurements] = useState({});
   const [selectedPipe, setSelectedPipe] = useState(null);
@@ -53,8 +55,8 @@ export default function App() {
     };
   }, []);
 
-  const handleSaveMeasurement = (pipeId, data) => {
-    const updated = saveMeasurement(pipeId, data);
+  const handleSaveMeasurement = (pipeId, data, cascadeList = []) => {
+    const updated = saveMeasurement(pipeId, data, cascadeList);
     setMeasurements({ ...updated });
   };
 
@@ -84,7 +86,9 @@ export default function App() {
     exportToCSV(networkData.pipes || [], measurements, nodeMap);
   };
 
-  const inspectedCount = Object.keys(measurements).length;
+  const measuredList = Object.values(measurements);
+  const directCount = measuredList.filter(m => m.source !== 'cascade').length;
+  const cascadeCount = measuredList.filter(m => m.source === 'cascade').length;
   const totalCount = networkData.pipes?.length || 0;
 
   return (
@@ -114,11 +118,16 @@ export default function App() {
         {/* Right Action Icons */}
         <div className="flex items-center gap-2">
           {/* Inspected Counter Pill */}
-          <div className="hidden sm:flex items-center gap-1 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700 text-xs">
-            <span className="text-slate-400">Terukur:</span>
+          <div className="hidden sm:flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700 text-xs">
+            <span className="text-slate-400">Aktual:</span>
             <span className="font-bold text-sky-400 font-mono">
-              {inspectedCount}/{totalCount}
+              {directCount}/{totalCount}
             </span>
+            {cascadeCount > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30 font-semibold" title={`Terdampak estimasi jalur: ${cascadeCount} pipa`}>
+                +{cascadeCount} jalur
+              </span>
+            )}
           </div>
 
           {/* Online / Offline status */}
@@ -181,6 +190,17 @@ export default function App() {
             }}
           />
         )}
+
+        {activeTab === 'nrw' && (
+          <WaterLossView
+            networkData={networkData}
+            measurements={measurements}
+            onSelectPipe={(p) => {
+              setSelectedPipe(p);
+              setActiveTab('map');
+            }}
+          />
+        )}
       </main>
 
       {/* Bottom Mobile Navigation Bar */}
@@ -217,7 +237,7 @@ export default function App() {
             <ListFilter className="w-5 h-5" />
           </div>
           <span className="text-[10px] font-semibold tracking-tight">Daftar Pipa</span>
-          {inspectedCount > 0 && (
+          {directCount > 0 && (
             <span className="absolute top-1 right-[28%] w-2 h-2 rounded-full bg-emerald-400" />
           )}
         </button>
@@ -238,12 +258,30 @@ export default function App() {
           </div>
           <span className="text-[10px] font-semibold tracking-tight">Dashboard</span>
         </button>
+
+        {/* Tab Analisis NRW */}
+        <button
+          onClick={() => setActiveTab('nrw')}
+          className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 transition ${
+            activeTab === 'nrw' ? 'text-sky-400' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <div
+            className={`p-1 rounded-xl transition ${
+              activeTab === 'nrw' ? 'bg-sky-500/20' : 'bg-transparent'
+            }`}
+          >
+            <SearchX className="w-5 h-5" />
+          </div>
+          <span className="text-[10px] font-semibold tracking-tight">NRW</span>
+        </button>
       </nav>
 
       {/* Pipe Inspection Bottom Sheet / Modal */}
       {selectedPipe && (
         <InspectionModal
           pipe={selectedPipe}
+          networkData={networkData}
           existingMeasurement={measurements[selectedPipe.id]}
           onSave={handleSaveMeasurement}
           onDelete={handleDeleteMeasurement}

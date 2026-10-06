@@ -490,3 +490,297 @@ export function formatDateTime(isoString) {
     return isoString;
   }
 }
+
+/**
+ * Melacak rute jalur pipa kontinu (hulu/upstream & hilir/downstream) dari suatu pipa target.
+ */
+export function tracePipelineRoute(networkData, startPipeId) {
+  if (!networkData?.pipes) return { upstream: [], downstream: [], allConnectedIds: new Set(), totalLength: 0 };
+  const pipes = networkData.pipes;
+  const nodes = networkData.nodes || [];
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const pipeMap = new Map(pipes.map(p => [p.id, p]));
+
+  const startPipe = pipeMap.get(startPipeId);
+  if (!startPipe) return { upstream: [], downstream: [], allConnectedIds: new Set(), totalLength: 0 };
+
+  // Bangun adjacency graph terarah
+  const outAdj = new Map(); // nodeId -> [pipe]
+  const inAdj = new Map();  // nodeId -> [pipe]
+
+  pipes.forEach(p => {
+    if (!outAdj.has(p.startNodeId)) outAdj.set(p.startNodeId, []);
+    outAdj.get(p.startNodeId).push(p);
+
+    if (!inAdj.has(p.endNodeId)) inAdj.set(p.endNodeId, []);
+    inAdj.get(p.endNodeId).push(p);
+  });
+
+  const visitedPipes = new Set([startPipe.id]);
+  const downstream = [];
+  const upstream = [];
+
+  // 1. Trace Downstream (Hilir)
+  let queueDown = [startPipe];
+  while (queueDown.length > 0 && downstream.length < 35) {
+    const current = queueDown.shift();
+    const nextPipes = (outAdj.get(current.endNodeId) || []).filter(np => !visitedPipes.has(np.id));
+    
+    // Sort nextPipes: prioritaskan diameter dan debit yang sebanding (main distribution branch)
+    nextPipes.sort((a, b) => (b.diameter || 0) - (a.diameter || 0));
+
+    for (const np of nextPipes) {
+      visitedPipes.add(np.id);
+      downstream.push(np);
+      queueDown.push(np);
+    }
+  }
+
+  // 2. Trace Upstream (Hulu)
+  let queueUp = [startPipe];
+  while (queueUp.length > 0 && upstream.length < 35) {
+    const current = queueUp.shift();
+    const prevPipes = (inAdj.get(current.startNodeId) || []).filter(pp => !visitedPipes.has(pp.id));
+    
+    prevPipes.sort((a, b) => (b.diameter || 0) - (a.diameter || 0));
+
+    for (const pp of prevPipes) {
+      visitedPipes.add(pp.id);
+      upstream.push(pp);
+      queueUp.push(pp);
+    }
+  }
+
+  const allConnectedIds = new Set([startPipe.id, ...downstream.map(p => p.id), ...upstream.map(p => p.id)]);
+  let totalLength = startPipe.length || 0;
+  downstream.forEach(p => { totalLength += (p.length || 0); });
+  upstream.forEach(p => { totalLength += (p.length || 0); });
+
+  return {
+    startPipe,
+    upstream,
+    downstream,
+    allConnectedIds,
+    totalLength: Math.round(totalLength)
+  };
+}
+
+/**
+ * Menghitung dampak perambatan hidrolis ke segmen pipa hilir di jalur yang sama (Pipeline Cascade)
+ * ketika angka Debit (Q) dan Tekanan (P) diubah.
+ */
+export function calculatePipelineCascade(networkData, startPipe, actualFlow, actualPressure) {
+  if (!networkData?.pipes || !startPipe) return null;
+
+  const nodeMap = new Map((networkData.nodes || []).map(n => [n.id, n]));
+
+  const designFlow = Math.abs(startPipe.flowRate || 0);
+  const designPressure = startPipe._designPressure || 2.4;
+
+  const actQ = (actualFlow !== null && actualFlow !== undefined && !isNaN(parseFloat(actualFlow)))
+    ? parseFloat(actualFlow)
+    : designFlow;
+
+  const hasActP = (actualPressure !== null && actualPressure !== undefined && actualPressure !== '' && !isNaN(parseFloat(actualPressure)));
+  const actP = hasActP ? parseFloat(actualPressure) : designPressure;
+
+  // Rasio debit aktual terhadap desain pada pipa awal
+  const qRatio = designFlow > 0 ? (actQ / designFlow) : 1;
+
+  // Bangun adjacency out
+  const outAdj = new Map();
+  (networkData.pipes || []).forEach(p => {
+    if (!outAdj.has(p.startNodeId)) outAdj.set(p.startNodeId, []);
+    outAdj.get(p.startNodeId).push(p);
+  });
+
+  const fromNode = nodeMap.get(startPipe.startNodeId);
+  const toNode = nodeMap.get(startPipe.endNodeId);
+  const startPipeLabel = `${fromNode?.label || 'J'} → ${toNode?.label || 'J'}`;
+
+  // Tekanan awal referensi untuk hilir (pada simpul akhir pipa startPipe)
+  const zStart = fromNode?.elevation || 0;
+  const zEnd = toNode?.elevation || 0;
+  const startHf = (startPipe.headloss || 0) * (designFlow > 0 ? Math.pow(actQ / designFlow, 1.852) : 1);
+
+  // Jika actP diukur sebagai tekanan rata-rata pipa atau titik tengah:
+  // Tekanan di ujung hilir startPipe:
+  let currentInletP = hasActP ? actP : (toNode?.pressure ?? 2.4);
+
+  const downstreamImpact = [];
+  const visited = new Set([startPipe.id]);
+  const queue = [{
+    pipe: startPipe,
+    currentPressure: currentInletP,
+    seq: 0
+  }];
+
+  let totalCascadeLength = 0;
+
+  while (queue.length > 0 && downstreamImpact.length < 35) {
+    const { pipe: parent, currentPressure: inletPressure, seq } = queue.shift();
+    const nextPipes = (outAdj.get(parent.endNodeId) || []).filter(np => !visited.has(np.id));
+
+    // Sort: prioritaskan cabang utama berdiameter terbesar
+    nextPipes.sort((a, b) => (b.diameter || 0) - (a.diameter || 0));
+
+    for (const np of nextPipes) {
+      visited.add(np.id);
+      const npStartNode = nodeMap.get(np.startNodeId);
+      const npEndNode = nodeMap.get(np.endNodeId);
+      const npDesQ = Math.abs(np.flowRate || 0);
+      const npDesP = (npStartNode?.pressure !== undefined && npEndNode?.pressure !== undefined)
+        ? (npStartNode.pressure + npEndNode.pressure) / 2
+        : (npStartNode?.pressure ?? npEndNode?.pressure ?? 2.4);
+
+      // Debit lanjutan: proporsional terhadap kontinuitas aliran rasio qRatio
+      const estQ = npDesQ * qRatio;
+
+      // Kecepatan lanjutan
+      const estV = calculateVelocity(estQ, np.diameter);
+
+      // Headloss lanjutan (Hazen-Williams: hf ~ Q^1.852)
+      const estHf = (np.headloss || 0) * (npDesQ > 0 ? Math.pow(estQ / npDesQ, 1.852) : 1);
+
+      // Tekanan lanjutan (Bernoulli HGL: H_end = H_start - hf, P = (H - z)/10.197)
+      const dz = (npEndNode?.elevation || 0) - (npStartNode?.elevation || 0);
+      const endPressure = Math.max(0, inletPressure - (estHf + dz) / 10.197);
+      const estP = Math.max(0, (inletPressure + endPressure) / 2);
+
+      const flowAnalysis = analyzeFlowStatus(npDesQ, estQ);
+      const velocityAnalysis = analyzeVelocityStatus(estV);
+      const pressureAnalysis = analyzePressureStatus(estP, npDesP);
+      const diagnostics = analyzeHydraulicDiagnostics({
+        designFlow: npDesQ,
+        actualFlow: estQ,
+        designPressure: npDesP,
+        actualPressure: estP,
+        diameter: np.diameter
+      });
+
+      const impactItem = {
+        pipeId: np.id,
+        pipe: {
+          ...np,
+          _fromLabel: npStartNode?.label || 'J',
+          _toLabel: npEndNode?.label || 'J',
+          _designPressure: npDesP
+        },
+        sequence: seq + 1,
+        actualFlow: Number(estQ.toFixed(2)),
+        actualPressure: Number(estP.toFixed(2)),
+        actualVelocity: Number(estV.toFixed(2)),
+        actualHeadloss: Number(estHf.toFixed(2)),
+        pressureDelta: Number((estP - npDesP).toFixed(2)),
+        flowDelta: Number((estQ - npDesQ).toFixed(2)),
+        flowDeviationPercent: Number(flowAnalysis.percentDeviation.toFixed(1)),
+        flowAnalysis,
+        velocityAnalysis,
+        pressureAnalysis,
+        diagnostics,
+        source: 'cascade',
+        parentPipeId: startPipe.id,
+        parentPipeName: startPipeLabel
+      };
+
+      downstreamImpact.push(impactItem);
+      totalCascadeLength += (np.length || 0);
+
+      queue.push({
+        pipe: np,
+        currentPressure: endPressure,
+        seq: seq + 1
+      });
+    }
+  }
+
+  return {
+    targetPipeId: startPipe.id,
+    targetPipeLabel: startPipeLabel,
+    inputFlow: actQ,
+    inputPressure: actP,
+    flowRatio: qRatio,
+    downstreamPipes: downstreamImpact,
+    totalImpactedCount: downstreamImpact.length,
+    totalImpactedLength: Math.round(totalCascadeLength)
+  };
+}
+
+/**
+ * Deteksi Keseimbangan Air (Water Balance) & Kebocoran Jalur antar titik ukur
+ */
+export function calculateWaterBalance(pipes, measurements, nodeMap) {
+  if (!pipes || !measurements) return [];
+
+  const outAdj = new Map();
+  pipes.forEach(p => {
+    if (!outAdj.has(p.startNodeId)) outAdj.set(p.startNodeId, []);
+    outAdj.get(p.startNodeId).push(p);
+  });
+
+  const alerts = [];
+
+  // Cari pasangan pipa hulu dan hilir yang keduanya memiliki pengukuran langsung
+  const measuredPipeIds = Object.keys(measurements).filter(
+    id => measurements[id]?.actualFlow !== undefined && measurements[id]?.source !== 'cascade'
+  );
+
+  const checkedPairs = new Set();
+
+  measuredPipeIds.forEach(upstreamId => {
+    const upMeas = measurements[upstreamId];
+    const upPipe = pipes.find(p => p.id === upstreamId);
+    if (!upPipe) return;
+
+    // Telusuri downstream dari upPipe
+    const visited = new Set([upstreamId]);
+    const queue = [upPipe];
+    let distanceTraveled = 0;
+
+    while (queue.length > 0 && distanceTraveled < 3000) {
+      const curr = queue.shift();
+      const nextPipes = outAdj.get(curr.endNodeId) || [];
+
+      for (const next of nextPipes) {
+        if (visited.has(next.id)) continue;
+        visited.add(next.id);
+
+        const downMeas = measurements[next.id];
+        if (downMeas && downMeas.source !== 'cascade' && downMeas.actualFlow !== undefined) {
+          const pairKey = `${upstreamId}->${next.id}`;
+          if (!checkedPairs.has(pairKey)) {
+            checkedPairs.add(pairKey);
+
+            const qUp = Number(upMeas.actualFlow);
+            const qDown = Number(downMeas.actualFlow);
+            const deltaQ = qUp - qDown; // Selisih kehilangan debit
+
+            if (deltaQ > 0.5) {
+              const fromLabel = nodeMap.get(upPipe.startNodeId)?.label || 'J';
+              const toLabel = nodeMap.get(next.endNodeId)?.label || 'J';
+              const pctLoss = qUp > 0 ? (deltaQ / qUp) * 100 : 0;
+
+              alerts.push({
+                upstreamPipeId: upstreamId,
+                downstreamPipeId: next.id,
+                routeLabel: `${fromLabel} ➔ ${toLabel}`,
+                qUp,
+                qDown,
+                deltaQ: Number(deltaQ.toFixed(2)),
+                pctLoss: Number(pctLoss.toFixed(1)),
+                severity: pctLoss > 20 ? 'critical' : 'warning',
+                description: `Terdeteksi kehilangan debit sebesar ${deltaQ.toFixed(2)} L/s (${pctLoss.toFixed(1)}%) di sepanjang koridor pipa ini!`
+              });
+            }
+          }
+        } else {
+          distanceTraveled += (next.length || 0);
+          queue.push(next);
+        }
+      }
+    }
+  });
+
+  return alerts;
+}
+
