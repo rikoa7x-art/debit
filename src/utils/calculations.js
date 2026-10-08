@@ -830,12 +830,19 @@ export function calculateWaterBalance(pipes, measurements, nodeMap) {
 
     // Telusuri downstream dari upPipe
     const visited = new Set([upstreamId]);
-    const queue = [upPipe];
+    // Gunakan queue yang menyimpan status apakah jalur masih murni lurus tanpa percabangan
+    const queue = [{ pipe: upPipe, isLinear: true }];
     let distanceTraveled = 0;
 
     while (queue.length > 0 && distanceTraveled < 3000) {
-      const curr = queue.shift();
+      const { pipe: curr, isLinear } = queue.shift();
       const nextPipes = outAdj.get(curr.endNodeId) || [];
+      const currEndNode = nodeMap.get(curr.endNodeId);
+      
+      // Cek apakah ada percabangan (cabang > 1) atau ada pengambilan (demand > 0) di titik ini
+      const hasBranching = nextPipes.length > 1;
+      const hasDemand = currEndNode && currEndNode.demand > 0;
+      const stillLinear = isLinear && !hasBranching && !hasDemand;
 
       for (const next of nextPipes) {
         if (visited.has(next.id)) continue;
@@ -851,7 +858,8 @@ export function calculateWaterBalance(pipes, measurements, nodeMap) {
             const qDown = Number(downMeas.actualFlow);
             const deltaQ = qUp - qDown; // Selisih kehilangan debit
 
-            if (deltaQ > 0.5) {
+            // HANYA laporkan peringatan kehilangan debit JIKA jalurnya murni seri/linier
+            if (stillLinear && deltaQ > 0.5) {
               const fromLabel = nodeMap.get(upPipe.startNodeId)?.label || 'J';
               const toLabel = nodeMap.get(next.endNodeId)?.label || 'J';
               const pctLoss = qUp > 0 ? (deltaQ / qUp) * 100 : 0;
@@ -865,13 +873,13 @@ export function calculateWaterBalance(pipes, measurements, nodeMap) {
                 deltaQ: Number(deltaQ.toFixed(2)),
                 pctLoss: Number(pctLoss.toFixed(1)),
                 severity: pctLoss > 20 ? 'critical' : 'warning',
-                description: `Terdeteksi kehilangan debit sebesar ${deltaQ.toFixed(2)} L/s (${pctLoss.toFixed(1)}%) di sepanjang koridor pipa ini!`
+                description: `Terdeteksi kehilangan debit (kebocoran) sebesar ${deltaQ.toFixed(2)} L/s (${pctLoss.toFixed(1)}%) di sepanjang koridor seri ini!`
               });
             }
           }
         } else {
           distanceTraveled += (next.length || 0);
-          queue.push(next);
+          queue.push({ pipe: next, isLinear: stillLinear });
         }
       }
     }

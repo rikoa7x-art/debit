@@ -201,7 +201,7 @@ export function assignDMAZones(networkData) {
 }
 
 /**
- * Menghitung neraca per zona DMA
+ * Menghitung neraca per zona DMA (Total Inflow - Total Konsumsi)
  * @param {Object} networkData 
  * @param {Object} measurements 
  * @param {Object} dmaResult 
@@ -209,45 +209,79 @@ export function assignDMAZones(networkData) {
  */
 export function calculateDMABalance(networkData, measurements, dmaResult) {
   const pipesMap = new Map((networkData.pipes || []).map(p => [p.id, p]));
+  const nodesMap = new Map((networkData.nodes || []).map(n => [n.id, n]));
   
+  // Bangun adjacency list (incoming) untuk mendeteksi pipa inlet zona
+  const inAdj = new Map();
+  (networkData.pipes || []).forEach(p => {
+    if (!inAdj.has(p.endNodeId)) inAdj.set(p.endNodeId, []);
+    inAdj.get(p.endNodeId).push(p);
+  });
+
   return dmaResult.zones.map(zone => {
-    let totalDesignFlowLps = 0;
-    let totalActualFlowLps = 0;
+    const zonePipeIds = new Set(zone.pipeIds);
+    const zoneNodes = new Set();
     let measuredCount = 0;
     
+    const inletPipes = [];
+
+    // 1. Identifikasi Node di dalam Zona dan Pipa Inlet
     zone.pipeIds.forEach(pid => {
       const pipe = pipesMap.get(pid);
       if (pipe) {
-        totalDesignFlowLps += (pipe.flowRate || 0);
+        zoneNodes.add(pipe.startNodeId);
+        zoneNodes.add(pipe.endNodeId);
+        
+        // Pipa Inlet = Pipa yang startNode-nya tidak menerima air dari pipa lain di zona yang sama
+        const incoming = inAdj.get(pipe.startNodeId) || [];
+        const hasIncomingFromSameZone = incoming.some(incPipe => zonePipeIds.has(incPipe.id));
+        if (!hasIncomingFromSameZone) {
+          inletPipes.push(pipe);
+        }
       }
+      
       const meas = measurements[pid];
       if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
-        totalActualFlowLps += Number(meas.actualFlow);
         measuredCount++;
       }
     });
 
-    const unmeasuredCount = zone.totalPipes - measuredCount;
-    const coveragePercent = zone.totalPipes > 0 ? (measuredCount / zone.totalPipes) * 100 : 0;
-    
-    let lossLps = 0;
-    let measuredDesignFlow = 0;
-    zone.pipeIds.forEach(pid => {
-      const meas = measurements[pid];
-      if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
-        const pipe = pipesMap.get(pid);
-        if (pipe) measuredDesignFlow += (pipe.flowRate || 0);
+    // 2. Hitung Total Konsumsi Warga (Demand) di dalam Zona
+    let totalZoneDemand = 0;
+    zoneNodes.forEach(nodeId => {
+      const node = nodesMap.get(nodeId);
+      if (node && node.demand > 0) {
+        totalZoneDemand += node.demand;
       }
     });
 
-    if (measuredCount > 0) {
-      lossLps = Math.max(0, measuredDesignFlow - totalActualFlowLps);
-    } else {
-      lossLps = totalDesignFlowLps * 0.2; 
+    // 3. Hitung Total Inflow ke Zona
+    let totalDesignInflow = 0;
+    let totalActualInflow = 0;
+    
+    inletPipes.forEach(pipe => {
+      totalDesignInflow += (pipe.flowRate || 0);
+      const meas = measurements[pipe.id];
+      if (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow))) {
+        totalActualInflow += Number(meas.actualFlow);
+      } else {
+        // Fallback jika inlet tidak diukur: asumsikan sesuai desain agar balance tidak rusak
+        totalActualInflow += (pipe.flowRate || 0); 
+      }
+    });
+
+    // 4. Hitung Kehilangan Air (Water Loss)
+    // Jika tidak ada data demand sama sekali, asumsikan demand = 75% dari Inflow (standar awal/fallback)
+    if (totalZoneDemand === 0) {
+      totalZoneDemand = totalActualInflow * 0.75;
     }
 
-    const lossPercent = measuredDesignFlow > 0 ? (lossLps / measuredDesignFlow) * 100 : (lossLps / (totalDesignFlowLps || 1) * 100);
+    const lossLps = Math.max(0, totalActualInflow - totalZoneDemand);
+    const lossPercent = totalActualInflow > 0 ? (lossLps / totalActualInflow) * 100 : 0;
     
+    const unmeasuredCount = zone.totalPipes - measuredCount;
+    const coveragePercent = zone.totalPipes > 0 ? (measuredCount / zone.totalPipes) * 100 : 0;
+
     let severity = 'normal';
     if (lossPercent > 25) severity = 'critical';
     else if (lossPercent > 15) severity = 'warning';
@@ -255,8 +289,9 @@ export function calculateDMABalance(networkData, measurements, dmaResult) {
     return {
       zoneId: zone.id,
       zoneLabel: zone.label,
-      totalDesignFlowLps,
-      totalActualFlowLps,
+      totalDesignFlowLps: totalDesignInflow, 
+      totalActualFlowLps: totalActualInflow,
+      totalDemandLps: totalZoneDemand,
       lossLps,
       lossPercent,
       measuredCount,
