@@ -148,6 +148,20 @@ export default function MapComponent({
     map._osmLayer = osmLayer;
     map._satLayer = satelliteLayer;
 
+    // Tambahkan class CSS otomatis berdasarkan zoom level untuk menyembunyikan label kecil saat zoom out
+    const updateZoomClass = () => {
+      const currentZoom = map.getZoom();
+      if (currentZoom < 15) {
+        map.getContainer().classList.add('hide-minor-labels');
+      } else {
+        map.getContainer().classList.remove('hide-minor-labels');
+      }
+    };
+    
+    map.on('zoomend', updateZoomClass);
+    // Panggil sekali saat inisialisasi
+    updateZoomClass();
+
     // Initial fit bounds if pipes exist
     if (networkData?.pipes && networkData.pipes.length > 0) {
       const allCoords = [];
@@ -311,16 +325,20 @@ export default function MapComponent({
       const qDisplay = actualQStr !== null ? actualQStr : designQStr;
       const pDisplay = actualPStr !== null ? actualPStr : designPStr;
 
+      // Filter label: pipa utama (diameter >= 100), atau yang memiliki hasil ukuran lapangan, atau sedang dipilih
+      const isImportantLabel = pipe.diameter >= 100 || meas !== undefined || isSelected;
+      const visibilityClass = isImportantLabel ? 'major-pipe-label' : 'minor-pipe-label';
+
+      // Design ulang ukuran & susunan badge agar jauh lebih ringkas (compact)
       const badgeHtml = `
-        <div class="pipe-num-badge ${statusBadgeClass}" title="${pipeLabel}&#10;Debit (Q): ${qDisplay} L/s&#10;Tekanan (P): ${pDisplay} bar">
-          <span class="badge-q">Q:${qDisplay}</span>
-          <span class="badge-div">|</span>
-          <span class="badge-p">P:${pDisplay}b</span>
+        <div class="pipe-num-badge compact ${statusBadgeClass}" title="${pipeLabel}&#10;Debit (Q): ${qDisplay} L/s&#10;Tekanan (P): ${pDisplay} bar">
+          <span class="badge-v badge-q">${qDisplay}</span>
+          <span class="badge-v badge-p">${pDisplay}</span>
         </div>
       `;
 
       const badgeIcon = L.divIcon({
-        className: 'pipe-num-badge-container',
+        className: `pipe-num-badge-container ${visibilityClass}`,
         html: badgeHtml,
         iconSize: [0, 0],
         iconAnchor: [0, 0]
