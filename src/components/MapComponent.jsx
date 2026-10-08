@@ -32,7 +32,7 @@ export default function MapComponent({
   const accuracyCircleRef = useRef(null);
 
   const [mapType, setMapType] = useState('osm'); // 'osm' or 'satellite'
-  const [showNumbers, setShowNumbers] = useState(true); // Toggle angka Q & P di peta
+  const [showNumbers, setShowNumbers] = useState(false); // Toggle angka Q & P di peta
   const [showLegend, setShowLegend] = useState(false);
   const [nearestPipe, setNearestPipe] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
