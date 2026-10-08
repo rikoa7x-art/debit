@@ -331,6 +331,13 @@ export default function MapComponent({
       labelsGroup.addLayer(numMarker);
     });
 
+    // Calculate node degrees to filter out 2-pipe straight junctions
+    const nodeDegrees = {};
+    (networkData.pipes || []).forEach(p => {
+      nodeDegrees[p.startNodeId] = (nodeDegrees[p.startNodeId] || 0) + 1;
+      nodeDegrees[p.endNodeId] = (nodeDegrees[p.endNodeId] || 0) + 1;
+    });
+
     // Render Reservoirs & Junctions
     (networkData.nodes || []).forEach(node => {
       if (node.type === 'reservoir') {
@@ -350,6 +357,32 @@ export default function MapComponent({
           className: 'pipe-tooltip-custom'
         });
         nodesGroup.addLayer(marker);
+      } else if (node.type === 'junction') {
+        const degree = nodeDegrees[node.id] || 0;
+        const hasDemand = node.demand && node.demand > 0;
+        
+        // Filter agar titik tidak terlalu banyak: tampilkan hanya simpang (>2), ujung (1), atau yang memiliki demand
+        if (degree !== 2 || hasDemand) {
+          const isEndNode = degree === 1;
+          const iconSize = hasDemand ? 12 : 10;
+          // Design ulang warna node: kuning (demand), merah (ujung), biru terang (simpang)
+          const bgColor = hasDemand ? '#f59e0b' : (isEndNode ? '#ef4444' : '#38bdf8');
+          
+          const juncIcon = L.divIcon({
+            className: 'custom-junc-icon',
+            html: `
+              <div style="background-color: ${bgColor}; border: 1.5px solid #0f172a; width: ${iconSize}px; height: ${iconSize}px; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"></div>
+            `,
+            iconSize: [iconSize, iconSize],
+            iconAnchor: [iconSize / 2, iconSize / 2]
+          });
+          
+          const marker = L.marker([node.lat, node.lng], { icon: juncIcon });
+          marker.bindTooltip(`<b>Node ${node.label}</b><br/>Tipe: ${hasDemand ? 'Distribusi (Demand)' : (isEndNode ? 'Ujung Jalur' : 'Simpang Utama')}<br/>Elevasi: ${node.elevation} m<br/>Tekanan: ${node.pressure?.toFixed(2) || 0} bar${hasDemand ? '<br/>Demand: ' + node.demand + ' L/s' : ''}`, {
+            className: 'pipe-tooltip-custom'
+          });
+          nodesGroup.addLayer(marker);
+        }
       }
     });
 

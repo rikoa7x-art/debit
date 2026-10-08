@@ -133,7 +133,8 @@
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ─── Badge Angka Debit & Tekanan pada Peta ───────────────────── */
-.pipe-num-badge-container {
+.pipe-num-badge-container,
+.custom-junc-icon {
   background: transparent !important;
   border: none !important;
 }
