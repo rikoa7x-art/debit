@@ -82,7 +82,8 @@ export default function DashboardView({
       }
 
       const meas = measurements[pipe.id];
-      if (meas) {
+      // Hanya hitung pengukuran lapangan langsung (source='measured'), bukan estimasi cascade
+      if (meas && meas.source !== 'cascade') {
         const hasQ = meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow));
         const hasP = meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure));
 

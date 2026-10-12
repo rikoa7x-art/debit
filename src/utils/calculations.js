@@ -694,31 +694,38 @@ export function calculatePipelineCascade(networkData, startPipe, actualFlow, act
   const toNode = nodeMap.get(startPipe.endNodeId);
   const startPipeLabel = `${fromNode?.label || 'J'} → ${toNode?.label || 'J'}`;
 
-  // Tekanan awal referensi untuk hilir (pada simpul akhir pipa startPipe)
-  const zStart = fromNode?.elevation || 0;
-  const zEnd = toNode?.elevation || 0;
-  const startHf = (startPipe.headloss || 0) * (designFlow > 0 ? Math.pow(actQ / designFlow, 1.852) : 1);
-
-  // Jika actP diukur sebagai tekanan rata-rata pipa atau titik tengah:
-  // Tekanan di ujung hilir startPipe:
-  let currentInletP = hasActP ? actP : (toNode?.pressure ?? 2.4);
+  // actP diperlakukan sebagai tekanan pada simpul outlet (endNode) startPipe —
+  // titik ini langsung menjadi inlet bagi pipa-pipa hilir (downstream).
+  // Asumsi umum PDAM: manometer dipasang di junction/valve/washout pada ujung pipa.
+  const currentInletP = hasActP ? actP : (toNode?.pressure ?? 2.4);
 
   const downstreamImpact = [];
   const visited = new Set([startPipe.id]);
+  // actualFlow dilacak per item queue untuk hitung distribusi demand-aware di tiap junction
   const queue = [{
     pipe: startPipe,
     currentPressure: currentInletP,
+    actualFlow: actQ,
     seq: 0
   }];
 
   let totalCascadeLength = 0;
 
   while (queue.length > 0 && downstreamImpact.length < 35) {
-    const { pipe: parent, currentPressure: inletPressure, seq } = queue.shift();
+    const { pipe: parent, currentPressure: inletPressure, actualFlow: parentActualFlow, seq } = queue.shift();
     const nextPipes = (outAdj.get(parent.endNodeId) || []).filter(np => !visited.has(np.id));
 
-    // Sort: prioritaskan cabang utama berdiameter terbesar
-    nextPipes.sort((a, b) => (b.diameter || 0) - (a.diameter || 0));
+    // ── FIX Bug #4: Hitung debit tersedia setelah demand di endNode junction ──
+    const parentEndNode = nodeMap.get(parent.endNodeId);
+    const nodeDemand = parentEndNode?.demand || 0;
+    const parentDesignQ = Math.abs(parent.flowRate || 0);
+    // Scale demand proporsional terhadap rasio debit aktual vs desain
+    const scaledDemand = (parentDesignQ > 0 && nodeDemand > 0)
+      ? nodeDemand * (parentActualFlow / parentDesignQ)
+      : 0;
+    const availableQ = Math.max(0, parentActualFlow - scaledDemand);
+    // Total Q desain semua pipa hilir di junction ini (untuk distribusi proporsional)
+    const totalChildDesignQ = nextPipes.reduce((sum, p) => sum + Math.abs(p.flowRate || 0), 0);
 
     for (const np of nextPipes) {
       visited.add(np.id);
@@ -729,8 +736,10 @@ export function calculatePipelineCascade(networkData, startPipe, actualFlow, act
         ? (npStartNode.pressure + npEndNode.pressure) / 2
         : (npStartNode?.pressure ?? npEndNode?.pressure ?? 2.4);
 
-      // Debit lanjutan: proporsional terhadap kontinuitas aliran rasio qRatio
-      const estQ = npDesQ * qRatio;
+      // ── FIX Bug #4: Distribusi proporsional (setelah dikurangi demand node) ──
+      const estQ = (totalChildDesignQ > 0 && npDesQ > 0)
+        ? availableQ * (npDesQ / totalChildDesignQ)
+        : availableQ;
 
       // Kecepatan lanjutan
       const estV = calculateVelocity(estQ, np.diameter);
@@ -785,6 +794,7 @@ export function calculatePipelineCascade(networkData, startPipe, actualFlow, act
       queue.push({
         pipe: np,
         currentPressure: endPressure,
+        actualFlow: estQ,    // teruskan debit aktual pipa ini ke iterasi cascade berikutnya
         seq: seq + 1
       });
     }
@@ -830,12 +840,14 @@ export function calculateWaterBalance(pipes, measurements, nodeMap) {
 
     // Telusuri downstream dari upPipe
     const visited = new Set([upstreamId]);
-    // Gunakan queue yang menyimpan status apakah jalur masih murni lurus tanpa percabangan
-    const queue = [{ pipe: upPipe, isLinear: true }];
-    let distanceTraveled = 0;
+    // FIX Bug #6: Lacak jarak per jalur (pathDist), bukan akumulasi global,
+    // agar setiap cabang memiliki batas jarak independen (maks 3 km per jalur).
+    const queue = [{ pipe: upPipe, isLinear: true, pathDist: 0 }];
 
-    while (queue.length > 0 && distanceTraveled < 3000) {
-      const { pipe: curr, isLinear } = queue.shift();
+    while (queue.length > 0) {
+      const { pipe: curr, isLinear, pathDist } = queue.shift();
+      if (pathDist > 3000) continue; // Batasi pencarian per jalur maks 3 km
+
       const nextPipes = outAdj.get(curr.endNodeId) || [];
       const currEndNode = nodeMap.get(curr.endNodeId);
       
@@ -878,8 +890,8 @@ export function calculateWaterBalance(pipes, measurements, nodeMap) {
             }
           }
         } else {
-          distanceTraveled += (next.length || 0);
-          queue.push({ pipe: next, isLinear: stillLinear });
+          // Teruskan penelusuran; tambahkan panjang pipa ke pathDist jalur ini
+          queue.push({ pipe: next, isLinear: stillLinear, pathDist: pathDist + (next.length || 0) });
         }
       }
     }
