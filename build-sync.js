@@ -44,14 +44,17 @@ copyDir('dist/assets', 'assets');
 fs.copyFileSync('public/sw.js', 'sw.js');
 fs.copyFileSync('public/sw.js', 'docs/sw.js');
 
-// Update root index.html and docs/index.html to use relative assets for direct branch serving
+// Update dist/index.html, root index.html, and docs/index.html for both Vercel & GitHub Pages
 const distHtml = fs.readFileSync('dist/index.html', 'utf8');
 const staticHtml = distHtml
   .replace(/href="\/debit\/assets\//g, 'href="./assets/')
   .replace(/src="\/debit\/assets\//g, 'src="./assets/')
   .replace(/href="\/debit\//g, 'href="./')
-  .replace(/src="\/debit\//g, 'src="./');
+  .replace(/src="\/debit\//g, 'src="./')
+  .replace(/href="\/assets\//g, 'href="./assets/')
+  .replace(/src="\/assets\//g, 'src="./assets/');
 
+fs.writeFileSync('dist/index.html', staticHtml);
 fs.writeFileSync('index.html', staticHtml);
 fs.writeFileSync('docs/index.html', staticHtml);
 
