@@ -1,6 +1,131 @@
-// Local storage management for field measurements
+// Local storage management for field measurements & node demand overrides
+import { calculatePipelineCascade } from './calculations';
 
 const STORAGE_KEY = 'subang_water_pipe_measurements_v1';
+const NODE_STORAGE_KEY = 'subang_water_node_overrides_v1';
+
+export function getStoredNodeOverrides() {
+  try {
+    const raw = localStorage.getItem(NODE_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error('Failed to load node overrides', e);
+    return {};
+  }
+}
+
+export function saveNodeOverride(nodeId, data) {
+  const all = getStoredNodeOverrides();
+  all[nodeId] = {
+    ...data,
+    updatedAt: new Date().toISOString()
+  };
+  localStorage.setItem(NODE_STORAGE_KEY, JSON.stringify(all));
+  return all;
+}
+
+export function deleteNodeOverride(nodeId) {
+  const all = getStoredNodeOverrides();
+  delete all[nodeId];
+  localStorage.setItem(NODE_STORAGE_KEY, JSON.stringify(all));
+  return all;
+}
+
+export function clearAllNodeOverrides() {
+  localStorage.removeItem(NODE_STORAGE_KEY);
+  return {};
+}
+
+/**
+ * Merge base networkData with custom node overrides (demand, elevation, notes)
+ */
+export function applyNodeOverrides(baseData, nodeOverrides = {}) {
+  if (!baseData || !baseData.nodes) return baseData;
+  const nodes = baseData.nodes.map(node => {
+    const ov = nodeOverrides[node.id];
+    const origDemand = node._originalDemand !== undefined ? node._originalDemand : (node.demand || 0);
+    const origElevation = node._originalElevation !== undefined ? node._originalElevation : (node.elevation || 0);
+
+    if (!ov) {
+      return {
+        ...node,
+        demand: origDemand,
+        elevation: origElevation,
+        _originalDemand: origDemand,
+        _originalElevation: origElevation,
+        _isOverridden: false,
+        _notes: ''
+      };
+    }
+
+    return {
+      ...node,
+      demand: ov.demand !== undefined && ov.demand !== null ? Number(ov.demand) : origDemand,
+      elevation: ov.elevation !== undefined && ov.elevation !== null ? Number(ov.elevation) : origElevation,
+      _originalDemand: origDemand,
+      _originalElevation: origElevation,
+      _isOverridden: true,
+      _notes: ov.notes || '',
+      _updatedAt: ov.updatedAt
+    };
+  });
+
+  return {
+    ...baseData,
+    nodes
+  };
+}
+
+/**
+ * Recalculate all cascade measurements when node demands or elevations change
+ */
+export function recalculateAllCascades(networkData) {
+  const all = getStoredMeasurements();
+  const pipeMap = new Map((networkData?.pipes || []).map(p => [p.id, p]));
+
+  // Hapus semua cascade lama terlebih dahulu
+  Object.keys(all).forEach(key => {
+    if (all[key]?.source === 'cascade') {
+      delete all[key];
+    }
+  });
+
+  // Hitung ulang cascade dari setiap pipa yang diukur langsung
+  Object.keys(all).forEach(pipeId => {
+    const meas = all[pipeId];
+    if (!meas || meas.source !== 'measured') return;
+    const pipe = pipeMap.get(pipeId);
+    if (!pipe) return;
+
+    const cascadeRes = calculatePipelineCascade(
+      networkData,
+      pipe,
+      meas.actualFlow,
+      meas.actualPressure
+    );
+    const cascadeList = cascadeRes?.downstreamPipes || [];
+    cascadeList.forEach(c => {
+      if (all[c.pipeId]?.source === 'measured') return;
+      all[c.pipeId] = {
+        actualFlow: c.actualFlow,
+        actualPressure: c.actualPressure,
+        actualVelocity: c.actualVelocity,
+        actualHeadloss: c.actualHeadloss,
+        source: 'cascade',
+        parentPipeId: pipeId,
+        parentPipeName: c.parentPipeName || `${pipeId.slice(0, 6)}`,
+        sequence: c.sequence,
+        method: 'Estimasi Hidrolis Jalur (EPANET HGL)',
+        measuredAt: meas.measuredAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    });
+  });
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  return all;
+}
 
 export function getStoredMeasurements() {
   try {

@@ -32,6 +32,7 @@ export default function InspectionModal({
   existingMeasurement,
   onSave,
   onDelete,
+  onSelectNode,
   onClose
 }) {
   if (!pipe) return null;
@@ -207,6 +208,56 @@ export default function InspectionModal({
 
         {/* Modal Scrollable Body */}
         <div className="overflow-y-auto p-4 space-y-4 flex-1">
+          {/* Quick Edit Node Demand (Hulu & Hilir) */}
+          {(startNode || endNode) && onSelectNode && (
+            <div className="grid grid-cols-2 gap-2">
+              {startNode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onSelectNode(startNode);
+                  }}
+                  className="bg-slate-950/90 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 rounded-xl p-2.5 text-left transition flex items-center justify-between group"
+                >
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-medium">
+                      Node Hulu: <strong className="text-white">{startNode.label}</strong>
+                    </div>
+                    <div className="text-[11px] font-mono text-amber-400 font-bold mt-0.5">
+                      Demand: {startNode.demand || 0} L/s
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold group-hover:bg-amber-500 group-hover:text-slate-950 transition">
+                    Ubah
+                  </span>
+                </button>
+              )}
+              {endNode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onSelectNode(endNode);
+                  }}
+                  className="bg-slate-950/90 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 rounded-xl p-2.5 text-left transition flex items-center justify-between group"
+                >
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-medium">
+                      Node Hilir: <strong className="text-white">{endNode.label}</strong>
+                    </div>
+                    <div className="text-[11px] font-mono text-amber-400 font-bold mt-0.5">
+                      Demand: {endNode.demand || 0} L/s
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold group-hover:bg-amber-500 group-hover:text-slate-950 transition">
+                    Ubah
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Baseline Desain vs Real-time Diagnosis Card */}
           <div className="bg-slate-950/80 rounded-2xl p-3.5 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">

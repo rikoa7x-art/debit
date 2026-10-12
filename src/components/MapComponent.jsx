@@ -20,6 +20,7 @@ export default function MapComponent({
   measurements,
   selectedPipe,
   onSelectPipe,
+  onSelectNode,
   userLocation,
   setUserLocation
 }) {
@@ -362,7 +363,7 @@ export default function MapComponent({
         const resIcon = L.divIcon({
           className: 'custom-res-icon',
           html: `
-            <div style="background-color: #0284c7; border: 3px solid #ffffff; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); color: #fff; font-weight: bold; font-size: 10px;">
+            <div style="background-color: #0284c7; border: 3px solid #ffffff; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); color: #fff; font-weight: bold; font-size: 10px; cursor: pointer;">
               ${node.label || 'RES'}
             </div>
           `,
@@ -371,34 +372,43 @@ export default function MapComponent({
         });
 
         const marker = L.marker([node.lat, node.lng], { icon: resIcon });
-        marker.bindTooltip(`<b>Reservoir ${node.label}</b><br/>Elevasi: ${node.elevation} m<br/>Tekanan: ${node.pressure || 0} bar`, {
+        marker.bindTooltip(`<b>Reservoir ${node.label}</b><br/>Elevasi: ${node.elevation} m<br/>Tekanan: ${node.pressure || 0} bar<br/><span style="color:#38bdf8;font-size:10px;">Klik untuk detail node</span>`, {
           className: 'pipe-tooltip-custom'
         });
+        marker.on('click', () => onSelectNode && onSelectNode(node));
         nodesGroup.addLayer(marker);
       } else if (node.type === 'junction') {
         const degree = nodeDegrees[node.id] || 0;
         const hasDemand = node.demand && node.demand > 0;
+        const isOverridden = !!node._isOverridden;
         
-        // Filter agar titik tidak terlalu banyak: tampilkan hanya simpang (>2), ujung (1), atau yang memiliki demand
-        if (degree !== 2 || hasDemand) {
+        // Tampilkan simpang (>2), ujung (1), yang memiliki demand, yang sudah diubah manual, atau semua saat angka aktif
+        if (degree !== 2 || hasDemand || isOverridden || showNumbers) {
           const isEndNode = degree === 1;
-          const iconSize = hasDemand ? 12 : 10;
-          // Design ulang warna node: kuning (demand), merah (ujung), biru terang (simpang)
+          const iconSize = hasDemand || isOverridden ? 14 : 11;
+          // Warna node: kuning emas (demand > 0), merah (ujung), biru terang (simpang)
           const bgColor = hasDemand ? '#f59e0b' : (isEndNode ? '#ef4444' : '#38bdf8');
+          const borderStyle = isOverridden ? '2px solid #ffffff' : '1.5px solid #0f172a';
           
           const juncIcon = L.divIcon({
             className: 'custom-junc-icon',
             html: `
-              <div style="background-color: ${bgColor}; border: 1.5px solid #0f172a; width: ${iconSize}px; height: ${iconSize}px; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"></div>
+              <div style="background-color: ${bgColor}; border: ${borderStyle}; width: ${iconSize}px; height: ${iconSize}px; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.6); cursor: pointer;"></div>
             `,
             iconSize: [iconSize, iconSize],
             iconAnchor: [iconSize / 2, iconSize / 2]
           });
           
           const marker = L.marker([node.lat, node.lng], { icon: juncIcon });
-          marker.bindTooltip(`<b>Node ${node.label}</b><br/>Tipe: ${hasDemand ? 'Distribusi (Demand)' : (isEndNode ? 'Ujung Jalur' : 'Simpang Utama')}<br/>Elevasi: ${node.elevation} m<br/>Tekanan: ${node.pressure?.toFixed(2) || 0} bar${hasDemand ? '<br/>Demand: ' + node.demand + ' L/s' : ''}`, {
-            className: 'pipe-tooltip-custom'
-          });
+          marker.bindTooltip(
+            `<b>Node ${node.label}</b>${isOverridden ? ' <span style="color:#fbbf24">(Diubah)</span>' : ''}<br/>` +
+            `Tipe: ${hasDemand ? 'Distribusi (Demand)' : (isEndNode ? 'Ujung Jalur' : 'Simpang')}<br/>` +
+            `Elevasi: ${node.elevation} m | P: ${node.pressure?.toFixed(2) || 0} bar<br/>` +
+            `Demand: <b style="color:#fbbf24">${node.demand || 0} L/s</b><br/>` +
+            `<span style="color:#38bdf8;font-size:10px;">● Klik untuk ubah Demand</span>`,
+            { className: 'pipe-tooltip-custom' }
+          );
+          marker.on('click', () => onSelectNode && onSelectNode(node));
           nodesGroup.addLayer(marker);
         }
       }

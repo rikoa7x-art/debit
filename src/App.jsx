@@ -17,6 +17,7 @@ import MapComponent from './components/MapComponent';
 import PipeListView from './components/PipeListView';
 import DashboardView from './components/DashboardView';
 import InspectionModal from './components/InspectionModal';
+import NodeModal from './components/NodeModal';
 import QrCodeModal from './components/QrCodeModal';
 import WaterLossView from './components/WaterLossView';
 
@@ -26,6 +27,12 @@ import {
   saveMeasurement,
   deleteMeasurement,
   clearAllMeasurements,
+  getStoredNodeOverrides,
+  saveNodeOverride,
+  deleteNodeOverride,
+  clearAllNodeOverrides,
+  applyNodeOverrides,
+  recalculateAllCascades,
   generateDemoData,
   exportToCSV
 } from './utils/storage';
@@ -69,9 +76,13 @@ class ErrorBoundary extends React.Component {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('map'); // 'map', 'list', 'dashboard', 'nrw'
-  const [networkData, setNetworkData] = useState(subangData);
+  const [nodeOverrides, setNodeOverrides] = useState(() => getStoredNodeOverrides());
+  const [networkData, setNetworkData] = useState(() =>
+    applyNodeOverrides(subangData, getStoredNodeOverrides())
+  );
   const [measurements, setMeasurements] = useState({});
   const [selectedPipe, setSelectedPipe] = useState(null);
+  const [selectedNode, setSelectedNode] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [showQrModal, setShowQrModal] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -102,9 +113,30 @@ export default function App() {
     setMeasurements({ ...updated });
   };
 
+  const handleSaveNode = (nodeId, data) => {
+    const updatedOverrides = saveNodeOverride(nodeId, data);
+    setNodeOverrides({ ...updatedOverrides });
+    const updatedNet = applyNodeOverrides(subangData, updatedOverrides);
+    setNetworkData(updatedNet);
+    const updatedMeas = recalculateAllCascades(updatedNet);
+    setMeasurements({ ...updatedMeas });
+  };
+
+  const handleResetNode = (nodeId) => {
+    const updatedOverrides = deleteNodeOverride(nodeId);
+    setNodeOverrides({ ...updatedOverrides });
+    const updatedNet = applyNodeOverrides(subangData, updatedOverrides);
+    setNetworkData(updatedNet);
+    const updatedMeas = recalculateAllCascades(updatedNet);
+    setMeasurements({ ...updatedMeas });
+  };
+
   const handleClearAll = () => {
-    if (window.confirm('Yakin ingin menghapus seluruh data pengukuran lapangan?')) {
+    if (window.confirm('Yakin ingin menghapus seluruh data pengukuran lapangan & kustomisasi demand node?')) {
       const updated = clearAllMeasurements();
+      const clearedOverrides = clearAllNodeOverrides();
+      setNodeOverrides(clearedOverrides);
+      setNetworkData(applyNodeOverrides(subangData, clearedOverrides));
       setMeasurements({ ...updated });
     }
   };
@@ -204,6 +236,7 @@ export default function App() {
               measurements={measurements}
               selectedPipe={selectedPipe}
               onSelectPipe={setSelectedPipe}
+              onSelectNode={setSelectedNode}
               userLocation={userLocation}
               setUserLocation={setUserLocation}
             />
@@ -214,6 +247,7 @@ export default function App() {
               networkData={networkData}
               measurements={measurements}
               onSelectPipe={setSelectedPipe}
+              onSelectNode={setSelectedNode}
               userLocation={userLocation}
             />
           )}
@@ -328,7 +362,23 @@ export default function App() {
             existingMeasurement={measurements[selectedPipe.id]}
             onSave={handleSaveMeasurement}
             onDelete={handleDeleteMeasurement}
+            onSelectNode={setSelectedNode}
             onClose={() => setSelectedPipe(null)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* Node Demand Edit Modal */}
+      {selectedNode && (
+        <ErrorBoundary>
+          <NodeModal
+            node={networkData.nodes.find(n => n.id === selectedNode.id) || selectedNode}
+            networkData={networkData}
+            measurements={measurements}
+            onSaveNode={handleSaveNode}
+            onResetNode={handleResetNode}
+            onSelectPipe={setSelectedPipe}
+            onClose={() => setSelectedNode(null)}
           />
         </ErrorBoundary>
       )}
