@@ -13,7 +13,7 @@ import {
   Droplets,
   Hash
 } from 'lucide-react';
-import { analyzeFlowStatus, getDistanceToPolyline } from '../utils/calculations';
+import { analyzeFlowStatus, evaluatePipeFlowCapability, getDistanceToPolyline } from '../utils/calculations';
 
 export default function MapComponent({
   networkData,
@@ -218,7 +218,6 @@ export default function MapComponent({
       if (!pipe.routeCoordinates || pipe.routeCoordinates.length === 0) return;
 
       const meas = measurements[pipe.id];
-      const analysis = analyzeFlowStatus(pipe.flowRate, meas?.actualFlow);
       const isSelected = selectedPipe && selectedPipe.id === pipe.id;
 
       const fromNode = nodeMap.get(pipe.startNodeId);
@@ -229,57 +228,44 @@ export default function MapComponent({
       const pTo = toNode?.pressure ?? null;
       const designPressure = pFrom !== null && pTo !== null ? (pFrom + pTo) / 2 : (pFrom ?? pTo ?? 2.4);
 
+      // Evaluasi kemampuan pipa mengalirkan debit sesuai demand (Biru vs Merah + Animasi Laju Air)
+      const flowCap = evaluatePipeFlowCapability(pipe, fromNode, toNode, meas);
+      const pipeColor = flowCap.color; // #0ea5e9 (Biru) jika sanggup, #ef4444 (Merah) jika tidak sanggup
+      const statusLabel = flowCap.statusLabel;
+
       // Line width based on diameter (50mm to 400mm)
-      const baseWeight = Math.max(3, Math.min(8, (pipe.diameter / 60)));
+      const baseWeight = Math.max(3.5, Math.min(8.5, (pipe.diameter / 55)));
       const weight = isSelected ? baseWeight + 4 : baseWeight;
 
-      let pipeColor = analysis.color;
-      let statusLabel = analysis.label;
-
-      // Jika ada data tekanan aktual, utamakan deteksi krisis tekanan (< 0.7 bar)
-      if (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(parseFloat(meas.actualPressure))) {
-        const actP = parseFloat(meas.actualPressure);
-        if (actP < 0.7) {
-          pipeColor = '#ef4444'; // Merah: krisis tekanan / air tidak naik
-          statusLabel = `Kritis: Tekanan Rendah (${actP.toFixed(2)} bar)`;
-        } else if (actP > 6.0) {
-          pipeColor = '#c084fc'; // Ungu: overpressure
-          statusLabel = `Bahaya: Overpressure (${actP.toFixed(2)} bar)`;
-        } else if (analysis.status === 'unmeasured') {
-          pipeColor = '#10b981'; // Hijau: tekanan normal
-          statusLabel = `Tekanan Normal (${actP.toFixed(2)} bar)`;
-        }
-      }
-
+      // 1. Garis dasar pipa (Biru jika sanggup mengalirkan demand, Merah jika tidak sanggup)
       const polyline = L.polyline(pipe.routeCoordinates, {
         color: isSelected ? '#ffffff' : pipeColor,
         weight: weight,
-        opacity: isSelected ? 1 : (meas ? 0.95 : 0.75),
+        opacity: isSelected ? 1 : 0.9,
         lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: !meas && !isSelected ? '6, 6' : null
+        lineJoin: 'round'
       });
 
       // Tooltip
-      const designFlow = Math.abs(pipe.flowRate || 0).toFixed(2);
+      const designFlow = flowCap.requiredFlow.toFixed(2);
       const hasActualQ = meas && meas.actualFlow !== null && meas.actualFlow !== undefined && !isNaN(Number(meas.actualFlow));
       const actualFlow = hasActualQ
         ? (meas.isEstimatedFlow ? `~${Number(meas.actualFlow).toFixed(2)} L/s (est)` : `${Number(meas.actualFlow).toFixed(2)} L/s`)
-        : (meas && meas.actualPressure !== null && meas.actualPressure !== undefined ? `P: ${Number(meas.actualPressure).toFixed(2)} bar` : 'Belum diukur');
+        : `${flowCap.effectiveFlow.toFixed(2)} L/s`;
       
       const pAktualStr = (meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure)))
         ? `${Number(meas.actualPressure).toFixed(2)} bar`
-        : '-';
+        : `${flowCap.endPressure.toFixed(2)} bar`;
 
       const tooltipContent = `
         <div style="font-weight: 600; font-size: 12px; margin-bottom: 2px;">
-          ${pipeLabel} (${pipe.diameter}mm - ${pipe.material})
+          ${pipeLabel} (Ø${pipe.diameter}mm - ${pipe.material})
         </div>
         <div style="font-size: 11px; color: #94a3b8;">
-          Q Desain: <span style="color:#38bdf8">${designFlow} L/s</span> | Q Aktual: <span style="color:${pipeColor}">${actualFlow}</span>
+          Q Demand: <span style="color:#38bdf8">${designFlow} L/s</span> | Mengalir: <span style="color:${pipeColor};font-weight:bold;">${actualFlow}</span>
         </div>
         <div style="font-size: 11px; color: #94a3b8; margin-top: 1px;">
-          P Desain: <span style="color:#fbbf24">${designPressure.toFixed(2)} bar</span> | P Aktual: <span style="color:#34d399">${pAktualStr}</span>
+          Tekanan Hilir: <span style="color:#fbbf24">${pAktualStr}</span> | Laju (v): <span style="color:#e2e8f0">${flowCap.velocity.toFixed(2)} m/s</span>
         </div>
         <div style="font-size: 10px; margin-top: 2px; color: ${pipeColor}; font-weight: bold;">
           ● ${statusLabel}
@@ -302,12 +288,30 @@ export default function MapComponent({
       polyline.on('click', handlePipeClick);
       pipesGroup.addLayer(polyline);
 
+      // 2. Animasi gerakan laju air di atas garis pipa (searah aliran hulu -> hilir)
+      if (flowCap.hasFlowAnimation) {
+        const flowCoords = flowCap.isReverseFlow
+          ? [...pipe.routeCoordinates].reverse()
+          : pipe.routeCoordinates;
+
+        const flowAnimPolyline = L.polyline(flowCoords, {
+          color: flowCap.flowColor,
+          weight: Math.max(1.8, weight * 0.45),
+          opacity: flowCap.canDeliver ? 0.95 : 0.75,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
+          className: `pipe-water-flow ${flowCap.speedClass}`
+        });
+        pipesGroup.addLayer(flowAnimPolyline);
+      }
+
       // ─── Tampilkan Angka Data Debit & Tekanan Langsung di Peta ───
       const midIdx = Math.floor(pipe.routeCoordinates.length / 2);
       const midPoint = pipe.routeCoordinates[midIdx];
 
-      const designQStr = Math.abs(pipe.flowRate || 0).toFixed(1);
-      const designPStr = designPressure.toFixed(1);
+      const designQStr = flowCap.requiredFlow.toFixed(1);
+      const designPStr = flowCap.endPressure.toFixed(1);
       const actualQStr = (meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow)))
         ? Number(meas.actualFlow).toFixed(1)
         : null;
@@ -315,13 +319,7 @@ export default function MapComponent({
         ? Number(meas.actualPressure).toFixed(1)
         : null;
 
-      let statusBadgeClass = '';
-      if (meas) {
-        if (analysis.status === 'match') statusBadgeClass = 'status-match';
-        else if (analysis.status === 'warning') statusBadgeClass = 'status-warning';
-        else if (analysis.status === 'leak_alert') statusBadgeClass = 'status-leak';
-        else if (analysis.status === 'overflow_alert') statusBadgeClass = 'status-overflow';
-      }
+      const statusBadgeClass = flowCap.canDeliver ? '' : 'status-leak';
 
       const qDisplay = actualQStr !== null ? actualQStr : designQStr;
       const pDisplay = actualPStr !== null ? actualPStr : designPStr;
@@ -709,33 +707,31 @@ export default function MapComponent({
           onClick={() => setShowLegend(!showLegend)}
           className="bg-slate-900/90 backdrop-blur-md rounded-xl px-2.5 py-1.5 border border-slate-700/80 shadow-lg text-[10px] font-bold text-slate-300 flex items-center gap-1.5 hover:bg-slate-800 active:scale-95 transition"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-          <span>Legenda Status</span>
+          <span className="w-2 h-2 rounded-full bg-sky-400"></span>
+          <span>Legenda Aliran</span>
           <span className="text-[8px] text-slate-500">{showLegend ? '▲' : '▼'}</span>
         </button>
 
         {showLegend && (
-          <div className="mt-1.5 bg-slate-900/95 backdrop-blur-md rounded-2xl p-2.5 border border-slate-700/80 shadow-2xl max-w-[210px] text-xs space-y-1.5 animate-scale-up">
+          <div className="mt-1.5 bg-slate-900/95 backdrop-blur-md rounded-2xl p-2.5 border border-slate-700/80 shadow-2xl max-w-[235px] text-xs space-y-2 animate-scale-up">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-              <span>Status Deviasi Debit</span>
+              <span>Status Aliran & Demand</span>
               <span className="text-sky-400">Jalur ADB</span>
             </div>
-            <div className="grid grid-cols-2 gap-1 text-[10px]">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
-                <span className="text-slate-200 truncate">Sesuai (±10%)</span>
+            <div className="space-y-1.5 text-[10px]">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-1.5 rounded-full bg-sky-500 shrink-0 relative overflow-hidden">
+                  <span className="absolute inset-0 border-t-2 border-dashed border-sky-100" />
+                </span>
+                <span className="text-slate-200">Biru: Sanggup Mengalirkan Demand</span>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                <span className="text-slate-200">Merah: Tidak Sanggup Mengalir</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
-                <span className="text-slate-200 truncate">Peringatan</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-                <span className="text-slate-200 truncate">Drop/Bocor</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-sky-400 shrink-0" />
-                <span className="text-slate-200 truncate">Belum Ukur</span>
+                <span className="text-slate-300">Titik Node Demand (Klik = Ubah)</span>
               </div>
             </div>
           </div>

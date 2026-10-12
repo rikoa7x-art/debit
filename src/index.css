@@ -221,3 +221,32 @@
   color: #c084fc;
 }
 
+/* ─── Animasi Laju Aliran Air di Dalam Pipa (SVG Path) ────────── */
+@keyframes water-flow-dash {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.pipe-water-flow {
+  stroke-dasharray: 6, 18;
+  animation: water-flow-dash 1.05s linear infinite;
+  pointer-events: none !important;
+}
+
+.pipe-water-flow.flow-speed-fast {
+  animation-duration: 0.55s;
+}
+
+.pipe-water-flow.flow-speed-normal {
+  animation-duration: 1.05s;
+}
+
+.pipe-water-flow.flow-speed-slow {
+  animation-duration: 1.85s;
+}
+
+

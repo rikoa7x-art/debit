@@ -189,6 +189,91 @@ export function calculateVelocity(flowLps, diameterMm) {
 }
 
 /**
+ * Evaluasi kemampuan jalur pipa dalam mengalirkan debit sesuai Demand:
+ * - BIRU (#0ea5e9): Jika air bisa mengalirkan debit sesuai demand (Q > 0, tekanan cukup, kapasitas pipa sanggup, dan tidak defisit).
+ * - MERAH (#ef4444): Jika debit tidak sanggup mengalir di jalur pipa tersebut (Q <= 0, tekanan drop/habis, melebihi kapasitas pipa, atau debit aktual < demand).
+ */
+export function evaluatePipeFlowCapability(pipe, fromNode, toNode, meas) {
+  const signedDesignQ = Number(pipe?.flowRate || 0);
+  const isReverseFlow = signedDesignQ < 0;
+  const requiredFlow = Math.abs(signedDesignQ);
+
+  const upNode = isReverseFlow ? toNode : fromNode;
+  const downNode = isReverseFlow ? fromNode : toNode;
+
+  const hasMeasQ = meas && meas.actualFlow !== undefined && meas.actualFlow !== null && !isNaN(Number(meas.actualFlow));
+  const hasMeasP = meas && meas.actualPressure !== undefined && meas.actualPressure !== null && !isNaN(Number(meas.actualPressure));
+
+  const effectiveFlow = hasMeasQ ? Math.max(0, Number(meas.actualFlow)) : requiredFlow;
+  const velocity = calculateVelocity(effectiveFlow, pipe?.diameter || 100);
+
+  // Tekanan di ujung hilir pipa (menentukan apakah air sanggup mencapai node tujuan)
+  const modelEndP = downNode?.type === 'reservoir' ? 2.4 : (downNode?.pressure ?? 2.4);
+  const endPressure = hasMeasP ? Number(meas.actualPressure) : modelEndP;
+
+  const downDemand = Number(downNode?.demand || 0);
+
+  let canDeliver = true;
+  let statusLabel = `Sanggup Mengalirkan Demand (${effectiveFlow.toFixed(2)} L/s)`;
+  let reasonCode = 'OK';
+
+  // 1. Debit tidak mengalir sama sekali (Q <= 0.01 L/s)
+  if (effectiveFlow <= 0.01) {
+    canDeliver = false;
+    reasonCode = 'NO_FLOW';
+    statusLabel = downDemand > 0
+      ? `Tidak Sanggup Mengalir (Debit 0 L/s, Demand ${downDemand.toFixed(1)} L/s)`
+      : 'Tidak Ada Aliran Debit (0.00 L/s)';
+  }
+  // 2. Tekanan habis / negatif (air tidak sanggup mengalir melewati elevasi/headloss pipa)
+  else if (endPressure <= 0.05) {
+    canDeliver = false;
+    reasonCode = 'PRESSURE_EXHAUSTED';
+    statusLabel = `Tidak Sanggup Mengalir: Tekanan Habis (${endPressure.toFixed(2)} bar)`;
+  }
+  // 3. Tekanan di titik demand atau hasil ukur di bawah syarat minimum aliran (< 0.7 bar)
+  else if ((downDemand > 0 || hasMeasP) && endPressure < 0.7) {
+    canDeliver = false;
+    reasonCode = 'LOW_PRESSURE';
+    statusLabel = `Tidak Sanggup Mengalirkan Demand: Tekanan Kritis (${endPressure.toFixed(2)} bar < 0.7 bar)`;
+  }
+  // 4. Demand melebihi kapasitas fisik diameter pipa (kecepatan > 2.5 m/s)
+  else if (velocity > 2.5) {
+    canDeliver = false;
+    reasonCode = 'OVER_CAPACITY';
+    statusLabel = `Tidak Sanggup: Demand Melampaui Kapasitas Pipa Ø${pipe.diameter}mm (v=${velocity.toFixed(2)} m/s)`;
+  }
+  // 5. Debit aktual lebih rendah dari kebutuhan demand jalur (defisit > 10%)
+  else if (requiredFlow > 0.05 && effectiveFlow < requiredFlow * 0.90) {
+    canDeliver = false;
+    reasonCode = 'FLOW_DEFICIT';
+    const pct = ((effectiveFlow / requiredFlow) * 100).toFixed(0);
+    statusLabel = `Tidak Sanggup Memenuhi Demand: Mengalir ${effectiveFlow.toFixed(2)} dari ${requiredFlow.toFixed(2)} L/s (${pct}%)`;
+  }
+
+  let speedClass = 'flow-speed-normal';
+  if (velocity >= 1.0) speedClass = 'flow-speed-fast';
+  else if (velocity < 0.35) speedClass = 'flow-speed-slow';
+
+  const hasFlowAnimation = effectiveFlow > 0.01 && endPressure > 0.01;
+
+  return {
+    canDeliver,
+    reasonCode,
+    color: canDeliver ? '#0ea5e9' : '#ef4444', // Biru jika sanggup, Merah jika tidak sanggup
+    flowColor: canDeliver ? '#e0f2fe' : '#fecaca',
+    statusLabel,
+    requiredFlow,
+    effectiveFlow,
+    endPressure,
+    velocity,
+    isReverseFlow,
+    hasFlowAnimation,
+    speedClass
+  };
+}
+
+/**
  * Analisa Status Kecepatan Aliran (v) berdasarkan Standar SNI 7509:2011:
  * - v < 0.3 m/s: Kritis Rendah (Risiko sedimentasi dan penurunan mutu air)
  * - 0.3 <= v <= 2.0 m/s: Optimal Operasional Jaringan Pipa Distribusi

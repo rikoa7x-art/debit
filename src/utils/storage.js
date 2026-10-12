@@ -39,41 +39,194 @@ export function clearAllNodeOverrides() {
 
 /**
  * Merge base networkData with custom node overrides (demand, elevation, notes)
+ * and dynamically solve network pipe flows, velocities, headlosses, and node pressures.
  */
 export function applyNodeOverrides(baseData, nodeOverrides = {}) {
   if (!baseData || !baseData.nodes) return baseData;
+
+  let hasActiveChange = false;
+
   const nodes = baseData.nodes.map(node => {
     const ov = nodeOverrides[node.id];
     const origDemand = node._originalDemand !== undefined ? node._originalDemand : (node.demand || 0);
     const origElevation = node._originalElevation !== undefined ? node._originalElevation : (node.elevation || 0);
+    const origPressure = node._originalPressure !== undefined ? node._originalPressure : (node.pressure ?? 2.4);
+    const origHeadloss = node._originalHeadloss !== undefined ? node._originalHeadloss : (node.headloss || 0);
 
     if (!ov) {
       return {
         ...node,
         demand: origDemand,
         elevation: origElevation,
+        pressure: origPressure,
+        headloss: origHeadloss,
         _originalDemand: origDemand,
         _originalElevation: origElevation,
+        _originalPressure: origPressure,
+        _originalHeadloss: origHeadloss,
         _isOverridden: false,
         _notes: ''
       };
     }
 
+    const newDemand = ov.demand !== undefined && ov.demand !== null ? Number(ov.demand) : origDemand;
+    const newElevation = ov.elevation !== undefined && ov.elevation !== null ? Number(ov.elevation) : origElevation;
+
+    if (Math.abs(newDemand - origDemand) > 1e-5 || Math.abs(newElevation - origElevation) > 1e-5) {
+      hasActiveChange = true;
+    }
+
     return {
       ...node,
-      demand: ov.demand !== undefined && ov.demand !== null ? Number(ov.demand) : origDemand,
-      elevation: ov.elevation !== undefined && ov.elevation !== null ? Number(ov.elevation) : origElevation,
+      demand: newDemand,
+      elevation: newElevation,
+      pressure: origPressure,
+      headloss: origHeadloss,
       _originalDemand: origDemand,
       _originalElevation: origElevation,
+      _originalPressure: origPressure,
+      _originalHeadloss: origHeadloss,
       _isOverridden: true,
       _notes: ov.notes || '',
       _updatedAt: ov.updatedAt
     };
   });
 
+  const basePipes = (baseData.pipes || []).map(p => {
+    const origQ = p._originalFlowRate !== undefined ? p._originalFlowRate : (p.flowRate || 0);
+    const origV = p._originalVelocity !== undefined ? p._originalVelocity : (p.velocity || 0);
+    const origHf = p._originalHeadloss !== undefined ? p._originalHeadloss : (p.headloss || 0);
+    return {
+      ...p,
+      flowRate: origQ,
+      velocity: origV,
+      headloss: origHf,
+      _originalFlowRate: origQ,
+      _originalVelocity: origV,
+      _originalHeadloss: origHf
+    };
+  });
+
+  if (!hasActiveChange) {
+    return {
+      ...baseData,
+      nodes,
+      pipes: basePipes
+    };
+  }
+
+  // 1. Bangun pohon suplai hidrolis (Dijkstra resistansi minimum) dari Reservoir R1 & R2
+  const adj = new Map();
+  nodes.forEach(n => adj.set(n.id, []));
+  basePipes.forEach(p => {
+    if (adj.has(p.startNodeId)) {
+      adj.get(p.startNodeId).push({ pipe: p, nextId: p.endNodeId, dir: 1 });
+    }
+    if (adj.has(p.endNodeId)) {
+      adj.get(p.endNodeId).push({ pipe: p, nextId: p.startNodeId, dir: -1 });
+    }
+  });
+
+  const dist = new Map();
+  const parentEdge = new Map();
+  const topoOrder = [];
+  const pq = [];
+
+  nodes.filter(n => n.type === 'reservoir').forEach(r => {
+    dist.set(r.id, 0);
+    pq.push({ id: r.id, d: 0 });
+  });
+
+  while (pq.length > 0) {
+    pq.sort((a, b) => a.d - b.d);
+    const { id, d } = pq.shift();
+    if (d > dist.get(id)) continue;
+    topoOrder.push(id);
+
+    const edges = adj.get(id) || [];
+    for (const e of edges) {
+      const D_m = Math.max(0.05, (e.pipe.diameter || 100) / 1000);
+      const res = (e.pipe.length || 1) / Math.pow(D_m, 4.87);
+      const nd = d + res;
+      if (!dist.has(e.nextId) || nd < dist.get(e.nextId)) {
+        dist.set(e.nextId, nd);
+        parentEdge.set(e.nextId, { pipeId: e.pipe.id, prevId: id, dir: e.dir });
+        pq.push({ id: e.nextId, d: nd });
+      }
+    }
+  }
+
+  // 2. Akumulasi perubahan debit (deltaDemand) sepanjang jalur dari Reservoir ke Node
+  const pipeFlowDelta = new Map();
+  nodes.forEach(n => {
+    const deltaQ = (n.demand || 0) - (n._originalDemand || 0);
+    if (Math.abs(deltaQ) > 1e-5) {
+      let curr = n.id;
+      while (parentEdge.has(curr)) {
+        const pe = parentEdge.get(curr);
+        const prevDelta = pipeFlowDelta.get(pe.pipeId) || 0;
+        pipeFlowDelta.set(pe.pipeId, prevDelta + pe.dir * deltaQ);
+        curr = pe.prevId;
+      }
+    }
+  });
+
+  // 3. Hitung ulang Q, v, dan Hazen-Williams headloss (hf) pada setiap pipa
+  const pipeDeltaHf = new Map();
+  const updatedPipes = basePipes.map(p => {
+    const dQ = pipeFlowDelta.get(p.id) || 0;
+    const newSignedQ = Number(((p._originalFlowRate || 0) + dQ).toFixed(3));
+    const absQ = Math.abs(newSignedQ);
+    const D_mm = p.diameter || 100;
+    const D_m = D_mm / 1000;
+    const L_m = p.length || 0;
+    const C = p.roughness || 120;
+
+    const newV = absQ > 0 ? Number(((4000 * absQ) / (Math.PI * D_mm * D_mm)).toFixed(3)) : 0;
+    const newHf = absQ > 0 && L_m > 0
+      ? Number((10.67 * L_m * Math.pow(absQ / 1000, 1.852) * Math.pow(C, -1.852) * Math.pow(D_m, -4.87)).toFixed(3))
+      : 0;
+
+    pipeDeltaHf.set(p.id, newHf - (p._originalHeadloss || 0));
+
+    return {
+      ...p,
+      flowRate: newSignedQ,
+      velocity: newV,
+      headloss: newHf
+    };
+  });
+
+  // 4. Propagasi perubahan Headloss (HGL) dari Reservoir ke seluruh Node untuk hitung Tekanan baru
+  const nodeCumDeltaHf = new Map();
+  topoOrder.forEach(nodeId => {
+    if (!parentEdge.has(nodeId)) {
+      nodeCumDeltaHf.set(nodeId, 0);
+    } else {
+      const pe = parentEdge.get(nodeId);
+      const parentDeltaH = nodeCumDeltaHf.get(pe.prevId) || 0;
+      const edgeDeltaH = pipeDeltaHf.get(pe.pipeId) || 0;
+      nodeCumDeltaHf.set(nodeId, parentDeltaH + edgeDeltaH);
+    }
+  });
+
+  const updatedNodes = nodes.map(n => {
+    if (n.type === 'reservoir') return n;
+    const dHf = nodeCumDeltaHf.get(n.id) || 0;
+    const dElev = (n.elevation || 0) - (n._originalElevation || 0);
+    const newHeadloss = Math.max(0, Number(((n._originalHeadloss || 0) + dHf).toFixed(3)));
+    const newPressure = Number(((n._originalPressure ?? 2.4) - (dHf + dElev) / 10.197).toFixed(3));
+    return {
+      ...n,
+      headloss: newHeadloss,
+      pressure: newPressure
+    };
+  });
+
   return {
     ...baseData,
-    nodes
+    nodes: updatedNodes,
+    pipes: updatedPipes
   };
 }
 
