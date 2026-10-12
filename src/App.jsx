@@ -18,11 +18,20 @@ import PipeListView from './components/PipeListView';
 import DashboardView from './components/DashboardView';
 import InspectionModal from './components/InspectionModal';
 import NodeModal from './components/NodeModal';
+import RegionModal from './components/RegionModal';
 import QrCodeModal from './components/QrCodeModal';
 import WaterLossView from './components/WaterLossView';
 
 import subangData from './Subang_Jalur_ADB.json';
 import {
+  DEFAULT_REGION_ID,
+  getActiveRegionId,
+  setActiveRegionId,
+  getRegionsList,
+  loadRegionData,
+  addCustomRegion,
+  deleteCustomRegion,
+  exportRegionToJSON,
   getStoredMeasurements,
   saveMeasurement,
   deleteMeasurement,
@@ -76,15 +85,21 @@ class ErrorBoundary extends React.Component {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('map'); // 'map', 'list', 'dashboard', 'nrw'
+  const [regions, setRegions] = useState(() => getRegionsList(subangData));
+  const [activeRegionId, setActiveRegionIdState] = useState(() => getActiveRegionId());
+  const [baseRegionData, setBaseRegionData] = useState(() =>
+    loadRegionData(getActiveRegionId(), subangData)
+  );
   const [nodeOverrides, setNodeOverrides] = useState(() => getStoredNodeOverrides());
   const [networkData, setNetworkData] = useState(() =>
-    applyNodeOverrides(subangData, getStoredNodeOverrides())
+    applyNodeOverrides(loadRegionData(getActiveRegionId(), subangData), getStoredNodeOverrides())
   );
   const [measurements, setMeasurements] = useState({});
   const [selectedPipe, setSelectedPipe] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [showRegionModal, setShowRegionModal] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   // Load measurements on mount
@@ -103,6 +118,46 @@ export default function App() {
     };
   }, []);
 
+  const handleSelectRegion = (regionId) => {
+    const newId = setActiveRegionId(regionId);
+    setActiveRegionIdState(newId);
+    const rawBase = loadRegionData(newId, subangData);
+    setBaseRegionData(rawBase);
+    const ov = getStoredNodeOverrides();
+    setNodeOverrides(ov);
+    setNetworkData(applyNodeOverrides(rawBase, ov));
+    setMeasurements(getStoredMeasurements());
+    setSelectedPipe(null);
+    setSelectedNode(null);
+    setUserLocation(null);
+  };
+
+  const handleAddRegion = (rawJson, customName) => {
+    const { regionId, regionData } = addCustomRegion(rawJson, customName);
+    setRegions(getRegionsList(subangData));
+    setActiveRegionIdState(regionId);
+    setBaseRegionData(regionData);
+    const ov = getStoredNodeOverrides();
+    setNodeOverrides(ov);
+    setNetworkData(applyNodeOverrides(regionData, ov));
+    setMeasurements(getStoredMeasurements());
+    setSelectedPipe(null);
+    setSelectedNode(null);
+    setUserLocation(null);
+    setActiveTab('map');
+  };
+
+  const handleDeleteRegion = (regionId) => {
+    deleteCustomRegion(regionId);
+    setRegions(getRegionsList(subangData));
+    const currentId = getActiveRegionId();
+    handleSelectRegion(currentId);
+  };
+
+  const handleExportActiveRegion = () => {
+    exportRegionToJSON(networkData, networkData?.projectName || 'Wilayah_Jaringan');
+  };
+
   const handleSaveMeasurement = (pipeId, data, cascadeList = []) => {
     const updated = saveMeasurement(pipeId, data, cascadeList);
     setMeasurements({ ...updated });
@@ -116,7 +171,7 @@ export default function App() {
   const handleSaveNode = (nodeId, data) => {
     const updatedOverrides = saveNodeOverride(nodeId, data);
     setNodeOverrides({ ...updatedOverrides });
-    const updatedNet = applyNodeOverrides(subangData, updatedOverrides);
+    const updatedNet = applyNodeOverrides(baseRegionData, updatedOverrides);
     setNetworkData(updatedNet);
     const updatedMeas = recalculateAllCascades(updatedNet);
     setMeasurements({ ...updatedMeas });
@@ -125,18 +180,18 @@ export default function App() {
   const handleResetNode = (nodeId) => {
     const updatedOverrides = deleteNodeOverride(nodeId);
     setNodeOverrides({ ...updatedOverrides });
-    const updatedNet = applyNodeOverrides(subangData, updatedOverrides);
+    const updatedNet = applyNodeOverrides(baseRegionData, updatedOverrides);
     setNetworkData(updatedNet);
     const updatedMeas = recalculateAllCascades(updatedNet);
     setMeasurements({ ...updatedMeas });
   };
 
   const handleClearAll = () => {
-    if (window.confirm('Yakin ingin menghapus seluruh data pengukuran lapangan & kustomisasi demand node?')) {
+    if (window.confirm('Yakin ingin menghapus seluruh data pengukuran lapangan & kustomisasi demand node pada wilayah ini?')) {
       const updated = clearAllMeasurements();
       const clearedOverrides = clearAllNodeOverrides();
       setNodeOverrides(clearedOverrides);
-      setNetworkData(applyNodeOverrides(subangData, clearedOverrides));
+      setNetworkData(applyNodeOverrides(baseRegionData, clearedOverrides));
       setMeasurements({ ...updated });
     }
   };
@@ -165,32 +220,32 @@ export default function App() {
       {/* Top Application Bar */}
       <header className="h-14 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-4 flex items-center justify-between shrink-0 z-30 pt-safe">
         {/* Brand & Title */}
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-sky-600 to-sky-400 flex items-center justify-center text-white shadow-md shadow-sky-500/20">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-sky-600 to-sky-400 flex items-center justify-center text-white shadow-md shadow-sky-500/20 shrink-0">
             <Droplets className="w-4 h-4 fill-white" />
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h1 className="font-bold text-sm sm:text-base text-white tracking-tight leading-none">
-                DebitAir Subang
+              <h1 className="font-bold text-sm sm:text-base text-white tracking-tight leading-none truncate">
+                {networkData?.projectName || 'DebitAir Subang'}
               </h1>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30">
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 shrink-0">
                 ADB
               </span>
-              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                v10.0
+              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                v11.0
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 leading-none mt-0.5">
-              Monitoring Jalur Transmisi & Distribusi
+            <p className="text-[10px] text-slate-400 leading-none mt-0.5 truncate">
+              {totalCount} Pipa • {networkData?.nodes?.length || 0} Node
             </p>
           </div>
         </div>
 
         {/* Right Action Icons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Inspected Counter Pill */}
-          <div className="hidden sm:flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700 text-xs">
+          <div className="hidden md:flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700 text-xs">
             <span className="text-slate-400">Aktual:</span>
             <span className="font-bold text-sky-400 font-mono">
               {directCount}/{totalCount}
@@ -202,9 +257,19 @@ export default function App() {
             )}
           </div>
 
+          {/* Region Switcher / Add New Region Button */}
+          <button
+            onClick={() => setShowRegionModal(true)}
+            className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
+            title="Pilih atau Tambah Wilayah Baru (.json)"
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span>Wilayah</span>
+          </button>
+
           {/* Online / Offline status */}
           <div
-            className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded-xl border ${
+            className={`hidden sm:flex items-center gap-1 text-[11px] px-2 py-1 rounded-xl border ${
               isOnline
                 ? 'bg-emerald-950/40 border-emerald-600/40 text-emerald-400'
                 : 'bg-amber-950/40 border-amber-600/40 text-amber-400'
@@ -379,6 +444,21 @@ export default function App() {
             onResetNode={handleResetNode}
             onSelectPipe={setSelectedPipe}
             onClose={() => setSelectedNode(null)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* Region Manager / Add New Region Modal */}
+      {showRegionModal && (
+        <ErrorBoundary>
+          <RegionModal
+            regions={regions}
+            activeRegionId={activeRegionId}
+            onSelectRegion={handleSelectRegion}
+            onAddRegion={handleAddRegion}
+            onDeleteRegion={handleDeleteRegion}
+            onExportActiveRegion={handleExportActiveRegion}
+            onClose={() => setShowRegionModal(false)}
           />
         </ErrorBoundary>
       )}

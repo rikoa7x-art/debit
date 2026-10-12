@@ -1,12 +1,42 @@
-// Local storage management for field measurements & node demand overrides
-import { calculatePipelineCascade } from './calculations';
+// Local storage management for field measurements, node demand overrides, & multi-region networks
+import { calculatePipelineCascade, getDistanceFromLatLonInMeters } from './calculations';
 
 const STORAGE_KEY = 'subang_water_pipe_measurements_v1';
 const NODE_STORAGE_KEY = 'subang_water_node_overrides_v1';
 
+export const DEFAULT_REGION_ID = 'subang-adb-default';
+const REGIONS_META_KEY = 'subang_water_regions_list_v1';
+const ACTIVE_REGION_KEY = 'subang_water_active_region_v1';
+const REGION_DATA_PREFIX = 'subang_water_region_data_';
+
+export function getActiveRegionId() {
+  try {
+    return localStorage.getItem(ACTIVE_REGION_KEY) || DEFAULT_REGION_ID;
+  } catch {
+    return DEFAULT_REGION_ID;
+  }
+}
+
+export function setActiveRegionId(regionId) {
+  localStorage.setItem(ACTIVE_REGION_KEY, regionId || DEFAULT_REGION_ID);
+  return regionId || DEFAULT_REGION_ID;
+}
+
+function getMeasKey(regionId = getActiveRegionId()) {
+  return !regionId || regionId === DEFAULT_REGION_ID
+    ? STORAGE_KEY
+    : `${STORAGE_KEY}_${regionId}`;
+}
+
+function getNodeKey(regionId = getActiveRegionId()) {
+  return !regionId || regionId === DEFAULT_REGION_ID
+    ? NODE_STORAGE_KEY
+    : `${NODE_STORAGE_KEY}_${regionId}`;
+}
+
 export function getStoredNodeOverrides() {
   try {
-    const raw = localStorage.getItem(NODE_STORAGE_KEY);
+    const raw = localStorage.getItem(getNodeKey());
     if (!raw) return {};
     return JSON.parse(raw);
   } catch (e) {
@@ -21,19 +51,19 @@ export function saveNodeOverride(nodeId, data) {
     ...data,
     updatedAt: new Date().toISOString()
   };
-  localStorage.setItem(NODE_STORAGE_KEY, JSON.stringify(all));
+  localStorage.setItem(getNodeKey(), JSON.stringify(all));
   return all;
 }
 
 export function deleteNodeOverride(nodeId) {
   const all = getStoredNodeOverrides();
   delete all[nodeId];
-  localStorage.setItem(NODE_STORAGE_KEY, JSON.stringify(all));
+  localStorage.setItem(getNodeKey(), JSON.stringify(all));
   return all;
 }
 
 export function clearAllNodeOverrides() {
-  localStorage.removeItem(NODE_STORAGE_KEY);
+  localStorage.removeItem(getNodeKey());
   return {};
 }
 
@@ -107,6 +137,13 @@ export function applyNodeOverrides(baseData, nodeOverrides = {}) {
     };
   });
 
+  // Jika wilayah baru diupload dalam kondisi belum dihitung (semua Q pipa = 0 tapi ada node demand > 0), aktifkan solver otomatis
+  const allPipesZeroFlow = basePipes.length > 0 && basePipes.every(p => Math.abs(p._originalFlowRate || 0) < 1e-5);
+  const hasAnyNodeDemand = nodes.some(n => (n.demand || 0) > 0);
+  if (allPipesZeroFlow && hasAnyNodeDemand) {
+    hasActiveChange = true;
+  }
+
   if (!hasActiveChange) {
     return {
       ...baseData,
@@ -115,7 +152,7 @@ export function applyNodeOverrides(baseData, nodeOverrides = {}) {
     };
   }
 
-  // 1. Bangun pohon suplai hidrolis (Dijkstra resistansi minimum) dari Reservoir R1 & R2
+  // 1. Bangun pohon suplai hidrolis (Dijkstra resistansi minimum) dari Reservoir
   const adj = new Map();
   nodes.forEach(n => adj.set(n.id, []));
   basePipes.forEach(p => {
@@ -132,7 +169,14 @@ export function applyNodeOverrides(baseData, nodeOverrides = {}) {
   const topoOrder = [];
   const pq = [];
 
-  nodes.filter(n => n.type === 'reservoir').forEach(r => {
+  let reservoirs = nodes.filter(n => n.type === 'reservoir');
+  if (reservoirs.length === 0 && nodes.length > 0) {
+    // Fallback jika JSON wilayah baru tidak mendefinisikan type='reservoir': pilih node dengan elevasi tertinggi
+    const highest = [...nodes].sort((a, b) => (b.elevation || 0) - (a.elevation || 0))[0];
+    reservoirs = [highest];
+  }
+
+  reservoirs.forEach(r => {
     dist.set(r.id, 0);
     pq.push({ id: r.id, d: 0 });
   });
@@ -159,7 +203,8 @@ export function applyNodeOverrides(baseData, nodeOverrides = {}) {
   // 2. Akumulasi perubahan debit (deltaDemand) sepanjang jalur dari Reservoir ke Node
   const pipeFlowDelta = new Map();
   nodes.forEach(n => {
-    const deltaQ = (n.demand || 0) - (n._originalDemand || 0);
+    const baseDem = allPipesZeroFlow ? 0 : (n._originalDemand || 0);
+    const deltaQ = (n.demand || 0) - baseDem;
     if (Math.abs(deltaQ) > 1e-5) {
       let curr = n.id;
       while (parentEdge.has(curr)) {
@@ -276,13 +321,13 @@ export function recalculateAllCascades(networkData) {
     });
   });
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  localStorage.setItem(getMeasKey(), JSON.stringify(all));
   return all;
 }
 
 export function getStoredMeasurements() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getMeasKey());
     if (!raw) return {};
     return JSON.parse(raw);
   } catch (e) {
@@ -330,7 +375,7 @@ export function saveMeasurement(pipeId, data, cascadeList = []) {
     });
   }
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  localStorage.setItem(getMeasKey(), JSON.stringify(all));
   return all;
 }
 
@@ -345,12 +390,12 @@ export function deleteMeasurement(pipeId) {
     }
   });
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  localStorage.setItem(getMeasKey(), JSON.stringify(all));
   return all;
 }
 
 export function clearAllMeasurements() {
-  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(getMeasKey());
   return {};
 }
 
@@ -426,7 +471,7 @@ export function generateDemoData(pipes, nodeMap) {
     };
   });
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(demo));
+  localStorage.setItem(getMeasKey(), JSON.stringify(demo));
   return demo;
 }
 
@@ -531,3 +576,335 @@ export function exportToCSV(pipes, measurements, nodeMap) {
   link.click();
   document.body.removeChild(link);
 }
+
+/**
+ * ─── MANAJEMEN MULTI-WILAYAH (TAMBAH / GANTI WILAYAH JSON) ────────────────
+ */
+
+export function getRegionsList(defaultData) {
+  const defaultEntry = {
+    id: DEFAULT_REGION_ID,
+    name: defaultData?.projectName || 'Subang Jalur ADB',
+    isDefault: true,
+    pipeCount: defaultData?.pipes?.length || 0,
+    nodeCount: defaultData?.nodes?.length || 0,
+    createdAt: defaultData?.savedAt || '2026-09-30T02:00:30.463Z'
+  };
+
+  try {
+    const raw = localStorage.getItem(REGIONS_META_KEY);
+    if (!raw) return [defaultEntry];
+    const customList = JSON.parse(raw);
+    if (!Array.isArray(customList)) return [defaultEntry];
+    return [defaultEntry, ...customList];
+  } catch (e) {
+    console.error('Failed to read regions list', e);
+    return [defaultEntry];
+  }
+}
+
+export function loadRegionData(regionId, defaultData) {
+  if (!regionId || regionId === DEFAULT_REGION_ID) {
+    return defaultData;
+  }
+  try {
+    const raw = localStorage.getItem(`${REGION_DATA_PREFIX}${regionId}`);
+    if (!raw) return defaultData;
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error('Failed to load custom region data', e);
+    return defaultData;
+  }
+}
+
+function calcPolylineLengthM(coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return 100;
+  let total = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    total += getDistanceFromLatLonInMeters(
+      coords[i][0],
+      coords[i][1],
+      coords[i + 1][0],
+      coords[i + 1][1]
+    );
+  }
+  return Math.max(1, Number(total.toFixed(1)));
+}
+
+/**
+ * Normalisasi & Validasi JSON Wilayah Baru:
+ * Mendukung:
+ * 1) Format standar aplikasi: { projectName, nodes: [...], pipes: [...] }
+ * 2) Format GeoJSON: { type: "FeatureCollection", features: [...] }
+ */
+export function normalizeAndValidateRegionJson(rawJson, customName = '') {
+  if (!rawJson || typeof rawJson !== 'object') {
+    throw new Error('File JSON tidak valid.');
+  }
+
+  let nodes = [];
+  let pipes = [];
+  const projectName = (customName || rawJson.projectName || rawJson.name || 'Wilayah Baru').trim();
+
+  // Format 1: { nodes: [...], pipes: [...] }
+  if (Array.isArray(rawJson.pipes) && rawJson.pipes.length > 0) {
+    nodes = Array.isArray(rawJson.nodes) ? rawJson.nodes.map((n, idx) => ({
+      id: String(n.id || `node-${idx + 1}`),
+      lat: Number(n.lat ?? n.latitude ?? -6.5581),
+      lng: Number(n.lng ?? n.lon ?? n.longitude ?? 107.8065),
+      elevation: Number(n.elevation ?? n.elev ?? 50),
+      type: n.type === 'reservoir' ? 'reservoir' : 'junction',
+      label: String(n.label || n.name || (n.type === 'reservoir' ? `R${idx + 1}` : `J${idx + 1}`)),
+      demand: Number(n.demand ?? 0),
+      pressure: Number(n.pressure ?? (n.type === 'reservoir' ? 0 : 2.4)),
+      headloss: Number(n.headloss ?? 0),
+      accessories: Array.isArray(n.accessories) ? n.accessories : []
+    })) : [];
+
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+    pipes = rawJson.pipes.map((p, idx) => {
+      const routeCoordinates = Array.isArray(p.routeCoordinates) && p.routeCoordinates.length >= 2
+        ? p.routeCoordinates.map(c => [Number(c[0]), Number(c[1])])
+        : [];
+
+      let startNodeId = String(p.startNodeId || p.fromNode || '');
+      let endNodeId = String(p.endNodeId || p.toNode || '');
+
+      // Buat node otomatis jika startNodeId/endNodeId belum ada di daftar nodes
+      if (!nodeMap.has(startNodeId) && routeCoordinates.length >= 1) {
+        startNodeId = startNodeId || `auto-node-s-${idx + 1}`;
+        const newNode = {
+          id: startNodeId,
+          lat: routeCoordinates[0][0],
+          lng: routeCoordinates[0][1],
+          elevation: 50,
+          type: idx === 0 ? 'reservoir' : 'junction',
+          label: idx === 0 ? 'R1' : `J${nodes.length + 1}`,
+          demand: 0,
+          pressure: 2.4,
+          headloss: 0
+        };
+        nodes.push(newNode);
+        nodeMap.set(startNodeId, newNode);
+      }
+
+      if (!nodeMap.has(endNodeId) && routeCoordinates.length >= 2) {
+        endNodeId = endNodeId || `auto-node-e-${idx + 1}`;
+        const lastCoord = routeCoordinates[routeCoordinates.length - 1];
+        const newNode = {
+          id: endNodeId,
+          lat: lastCoord[0],
+          lng: lastCoord[1],
+          elevation: 45,
+          type: 'junction',
+          label: `J${nodes.length + 1}`,
+          demand: 1,
+          pressure: 2.4,
+          headloss: 0
+        };
+        nodes.push(newNode);
+        nodeMap.set(endNodeId, newNode);
+      }
+
+      const diameter = Number(p.diameter ?? 150);
+      const length = Number(p.length ?? calcPolylineLengthM(routeCoordinates));
+      const flowRate = Number(p.flowRate ?? p.flow ?? 10);
+      const absQ = Math.abs(flowRate);
+      const velocity = p.velocity !== undefined
+        ? Number(p.velocity)
+        : Number(((4000 * absQ) / (Math.PI * diameter * diameter)).toFixed(3));
+
+      return {
+        id: String(p.id || `pipe-${idx + 1}`),
+        startNodeId,
+        endNodeId,
+        length,
+        diameter,
+        roughness: Number(p.roughness ?? 130),
+        material: String(p.material || 'HDPE'),
+        routeCoordinates,
+        flowRate,
+        velocity,
+        headloss: Number(p.headloss ?? 0.5)
+      };
+    });
+  }
+  // Format 2: GeoJSON FeatureCollection
+  else if (rawJson.type === 'FeatureCollection' && Array.isArray(rawJson.features)) {
+    const pointFeatures = rawJson.features.filter(f => f.geometry?.type === 'Point');
+    const lineFeatures = rawJson.features.filter(
+      f => f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
+    );
+
+    if (lineFeatures.length === 0) {
+      throw new Error('GeoJSON tidak memiliki fitur garis pipa (LineString / MultiLineString).');
+    }
+
+    pointFeatures.forEach((f, idx) => {
+      const [lng, lat] = f.geometry.coordinates;
+      const props = f.properties || {};
+      const type = String(props.type || '').toLowerCase().includes('res') ? 'reservoir' : 'junction';
+      nodes.push({
+        id: String(f.id || props.id || `node-${idx + 1}`),
+        lat: Number(lat),
+        lng: Number(lng),
+        elevation: Number(props.elevation ?? props.elev ?? 50),
+        type,
+        label: String(props.label || props.name || (type === 'reservoir' ? `R${idx + 1}` : `J${idx + 1}`)),
+        demand: Number(props.demand ?? 0),
+        pressure: Number(props.pressure ?? 2.4),
+        headloss: Number(props.headloss ?? 0)
+      });
+    });
+
+    const findOrCreateNodeAt = (lat, lng, isFirst) => {
+      // Cari node terdekat dalam radius 15 meter
+      for (const n of nodes) {
+        if (getDistanceFromLatLonInMeters(lat, lng, n.lat, n.lng) <= 15) {
+          return n.id;
+        }
+      }
+      const newId = `node-auto-${nodes.length + 1}`;
+      const isRes = isFirst && !nodes.some(n => n.type === 'reservoir');
+      nodes.push({
+        id: newId,
+        lat: Number(lat),
+        lng: Number(lng),
+        elevation: isRes ? 100 : 60,
+        type: isRes ? 'reservoir' : 'junction',
+        label: isRes ? 'R1' : `J${nodes.length + 1}`,
+        demand: isRes ? 0 : 1.5,
+        pressure: isRes ? 0 : 2.4,
+        headloss: 0
+      });
+      return newId;
+    };
+
+    lineFeatures.forEach((f, idx) => {
+      const props = f.properties || {};
+      const rawCoords = f.geometry.type === 'MultiLineString'
+        ? f.geometry.coordinates.flat()
+        : f.geometry.coordinates;
+      if (!Array.isArray(rawCoords) || rawCoords.length < 2) return;
+
+      const routeCoordinates = rawCoords.map(c => [Number(c[1]), Number(c[0])]);
+      const startNodeId = findOrCreateNodeAt(routeCoordinates[0][0], routeCoordinates[0][1], idx === 0);
+      const last = routeCoordinates[routeCoordinates.length - 1];
+      const endNodeId = findOrCreateNodeAt(last[0], last[1], false);
+
+      const diameter = Number(props.diameter ?? props.dia ?? 150);
+      const length = Number(props.length ?? calcPolylineLengthM(routeCoordinates));
+      const flowRate = Number(props.flowRate ?? props.flow ?? props.debit ?? 12);
+      const absQ = Math.abs(flowRate);
+      const velocity = Number(((4000 * absQ) / (Math.PI * diameter * diameter)).toFixed(3));
+
+      pipes.push({
+        id: String(f.id || props.id || `pipe-${idx + 1}`),
+        startNodeId,
+        endNodeId,
+        length,
+        diameter,
+        roughness: Number(props.roughness ?? 130),
+        material: String(props.material || 'HDPE'),
+        routeCoordinates,
+        flowRate,
+        velocity,
+        headloss: Number(props.headloss ?? 0.5)
+      });
+    });
+  } else {
+    throw new Error('Format JSON tidak dikenali. Gunakan JSON berstruktur { "nodes": [...], "pipes": [...] } atau GeoJSON FeatureCollection.');
+  }
+
+  if (pipes.length === 0) {
+    throw new Error('Data wilayah tidak memiliki daftar jalur pipa yang valid.');
+  }
+
+  return {
+    projectName,
+    savedAt: new Date().toISOString(),
+    version: '1.0',
+    nodes,
+    pipes
+  };
+}
+
+export function addCustomRegion(rawJson, customName = '') {
+  const normalizedData = normalizeAndValidateRegionJson(rawJson, customName);
+  const regionId = `region-${Date.now()}`;
+
+  const regionMeta = {
+    id: regionId,
+    name: normalizedData.projectName,
+    isDefault: false,
+    pipeCount: normalizedData.pipes.length,
+    nodeCount: normalizedData.nodes.length,
+    createdAt: new Date().toISOString()
+  };
+
+  let existingList = [];
+  try {
+    const raw = localStorage.getItem(REGIONS_META_KEY);
+    if (raw) existingList = JSON.parse(raw);
+    if (!Array.isArray(existingList)) existingList = [];
+  } catch {
+    existingList = [];
+  }
+
+  const updatedList = [...existingList, regionMeta];
+  localStorage.setItem(`${REGION_DATA_PREFIX}${regionId}`, JSON.stringify(normalizedData));
+  localStorage.setItem(REGIONS_META_KEY, JSON.stringify(updatedList));
+  setActiveRegionId(regionId);
+
+  return {
+    regionId,
+    regionMeta,
+    regionData: normalizedData
+  };
+}
+
+export function deleteCustomRegion(regionId) {
+  if (!regionId || regionId === DEFAULT_REGION_ID) return;
+
+  try {
+    const raw = localStorage.getItem(REGIONS_META_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const filtered = list.filter(r => r.id !== regionId);
+    localStorage.setItem(REGIONS_META_KEY, JSON.stringify(filtered));
+    localStorage.removeItem(`${REGION_DATA_PREFIX}${regionId}`);
+    localStorage.removeItem(getMeasKey(regionId));
+    localStorage.removeItem(getNodeKey(regionId));
+  } catch (e) {
+    console.error('Failed to delete custom region', e);
+  }
+
+  if (getActiveRegionId() === regionId) {
+    setActiveRegionId(DEFAULT_REGION_ID);
+  }
+}
+
+export function exportRegionToJSON(networkData, regionName = 'Wilayah_Jaringan') {
+  if (!networkData) return;
+  const cleanNodes = (networkData.nodes || []).map(({ _originalDemand, _originalElevation, _originalPressure, _originalHeadloss, _isOverridden, _notes, _updatedAt, ...rest }) => rest);
+  const cleanPipes = (networkData.pipes || []).map(({ _originalFlowRate, _originalVelocity, _originalHeadloss, ...rest }) => rest);
+
+  const payload = {
+    projectName: regionName || networkData.projectName || 'Wilayah Jaringan',
+    savedAt: new Date().toISOString(),
+    version: '1.0',
+    nodes: cleanNodes,
+    pipes: cleanPipes
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const safeName = (regionName || 'wilayah').replace(/[^a-zA-Z0-9_-]/g, '_');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `${safeName}_${new Date().toISOString().slice(0, 10)}.json`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+

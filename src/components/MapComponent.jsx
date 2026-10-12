@@ -425,6 +425,23 @@ export default function MapComponent({
   }, [networkData, measurements, selectedPipe, showNumbers]);
 
 
+  // Auto-focus map bounds when switching regions
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !networkData?.pipes || networkData.pipes.length === 0) return;
+
+    const allCoords = [];
+    networkData.pipes.forEach(p => {
+      if (p.routeCoordinates) {
+        p.routeCoordinates.forEach(c => allCoords.push(c));
+      }
+    });
+    if (allCoords.length > 0) {
+      const bounds = L.latLngBounds(allCoords);
+      map.fitBounds(bounds, { padding: [30, 30] });
+    }
+  }, [networkData?.projectName]);
+
   // Center on selected pipe when chosen
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -527,9 +544,15 @@ export default function MapComponent({
   };
 
   const handleSimulateGPS = () => {
-    // Simulate surveyor standing right in Subang network near pipe 1
-    const simulatedLat = -6.55715;
-    const simulatedLng = 107.80913;
+    // Gunakan koordinat pipa pertama dari wilayah aktif agar simulasi GPS berfungsi di semua wilayah
+    let simulatedLat = -6.55715;
+    let simulatedLng = 107.80913;
+    const firstPipe = networkData?.pipes?.find(p => Array.isArray(p.routeCoordinates) && p.routeCoordinates.length > 0);
+    if (firstPipe) {
+      const midIdx = Math.floor(firstPipe.routeCoordinates.length / 2);
+      simulatedLat = firstPipe.routeCoordinates[midIdx][0];
+      simulatedLng = firstPipe.routeCoordinates[midIdx][1];
+    }
     const pos = { coords: { latitude: simulatedLat, longitude: simulatedLng, accuracy: 5 } };
     const { latitude, longitude, accuracy } = pos.coords;
     const latlng = [latitude, longitude];
